@@ -4,7 +4,7 @@ indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labe
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-swingBars   = input.int(5, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
+swingBars   = input.int(8, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
 rsiLen      = input.int(14, "RSI Length", minval=1, group="RSI")
 rsiMaLen    = input.int(9, "RSI MA Length", minval=1, group="RSI")
 overbought  = input.float(70, "Overbought (overextended)", group="RSI")
@@ -12,7 +12,7 @@ oversold    = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor   = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor   = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels  = input.bool(true, "Show signal/break labels", group="Style")
-showDebug   = input.bool(true, "Show debug markers (structure break)", group="Debug")
+showDebug   = input.bool(false, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
 // Trend direction uses a structure-break definition (same as
@@ -122,25 +122,30 @@ var float bearStartPrice   = na
 var int   bearLastBar      = na
 var float bearLastPrice    = na
 
-if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
+if bullTrigger and not na(swingLowBar1)
     if not na(bullLine)
         line.delete(bullLine)
+    // Anchor the second point at the CURRENT bar/price rather than the
+    // older confirmed pivot -- using the pivot pair's slope projected
+    // across the (potentially large) gap to the trigger bar could already
+    // overshoot current price, causing an instant self-break before the
+    // line was ever visible.
     bullStartBar   := swingLowBar1
     bullStartPrice := swingLow1
-    bullLastBar    := swingLowBar2
-    bullLastPrice  := swingLow2
+    bullLastBar    := bar_index
+    bullLastPrice  := close
     bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.right, color=bullColor, width=2)
     trackingBull   := true
     if showLabels
         label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
 
-if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
+if bearTrigger and not na(swingHighBar1)
     if not na(bearLine)
         line.delete(bearLine)
     bearStartBar   := swingHighBar1
     bearStartPrice := swingHigh1
-    bearLastBar    := swingHighBar2
-    bearLastPrice  := swingHigh2
+    bearLastBar    := bar_index
+    bearLastPrice  := close
     bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.right, color=bearColor, width=2)
     trackingBear   := true
     if showLabels
