@@ -79,6 +79,9 @@ default to CDT (America/Chicago):
   extend the same length as the main ORB box (stopping at the current
   bar, not stretching into the empty future), instead of a box.
 
+All three also draw an opaque dotted midpoint line in the same color as
+their range, toggleable independently per range.
+
 All three automatically apply each trading day, extending through the
 rest of the session once their window closes (configurable per range).
 Note: these intraday windows (15-30 minutes) need a chart timeframe at or
