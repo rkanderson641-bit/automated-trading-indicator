@@ -153,8 +153,12 @@ if bearTrigger and not na(swingHighBar1)
 
 // ---------------------------------------------------------------------------
 // While still tracking, extend the line to each new confirming swing point
-// in the same direction (re-pivoting its slope), then check for a break
-// against the line's current projected value.
+// in the same direction (re-pivoting its slope). The break check compares
+// price against the line's latest actual anchor point (the most recent
+// confirmed swing low/high it passes through) rather than an extrapolated
+// diagonal projection -- projecting the steep slope of a fresh impulsive
+// move forward even one bar is often already steeper than price can
+// sustain, which caused near-instant false breaks.
 // ---------------------------------------------------------------------------
 bullBreak = false
 bearBreak = false
@@ -165,9 +169,7 @@ if trackingBull and not na(bullLine)
         bullLastPrice := pivotLowVal
         line.set_xy2(bullLine, bullLastBar, bullLastPrice)
 
-    bullSlope     = (bullLastPrice - bullStartPrice) / (bullLastBar - bullStartBar)
-    bullProjected = bullLastPrice + bullSlope * (bar_index - bullLastBar)
-    if close < bullProjected
+    if close < bullLastPrice
         bullBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
@@ -181,9 +183,7 @@ if trackingBear and not na(bearLine)
         bearLastPrice := pivotHighVal
         line.set_xy2(bearLine, bearLastBar, bearLastPrice)
 
-    bearSlope     = (bearLastPrice - bearStartPrice) / (bearLastBar - bearStartBar)
-    bearProjected = bearLastPrice + bearSlope * (bar_index - bearLastBar)
-    if close > bearProjected
+    if close > bearLastPrice
         bearBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
