@@ -12,26 +12,25 @@ oversold    = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor   = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor   = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels  = input.bool(true, "Show signal/break labels", group="Style")
+showDebug   = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
-// A "true trend" requires two consecutive higher swing highs AND higher
-// swing lows (uptrend), or two consecutive lower swing highs AND lower
-// swing lows (downtrend).
+// Trend direction uses a structure-break definition (same as
+// reversal_confluence.pine): a close beyond the most recent prior swing
+// high/low confirms a bullish/bearish trend immediately, without waiting
+// for a pullback to form a second confirming pivot. Requiring two full
+// higher-high/higher-low pivot pairs missed clean, sharp rallies entirely
+// -- by the time a pullback formed the second confirming pivot, RSI's
+// overbought peak had usually already passed.
 //
 // Once RSI confirms the trend is overextended/underextended (its MA above
 // overbought during a confirmed uptrend, or below oversold during a
-// confirmed downtrend), the trend line is drawn starting at the actual
-// origin of that trend leg (the earlier of the two confirming swing
-// points) through to the most recent confirming swing point. From there
-// it keeps extending to each NEW confirming swing point as the trend
-// continues (the "next point in its previously continued trend"),
-// re-pivoting its slope each time, until price closes through its
-// current projected value -- a trend break/reversal point.
-//
-// The overextended/underextended condition uses a level check with an
-// "armed" latch (not a same-bar crossover) so it still fires even when
-// the swing-confirmation lag means the trend structure confirms a few
-// bars after RSI actually crossed the threshold.
+// confirmed downtrend), the trend line is drawn starting at the swing low
+// (bullish) or swing high (bearish) that launched the move, through to
+// the most recent confirming swing point. From there it keeps extending
+// to each NEW confirming swing point as the trend continues, re-pivoting
+// its slope, until price closes through its current projected value -- a
+// trend break/reversal point.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -58,8 +57,35 @@ if not na(pivotLowVal)
     swingLow2    := pivotLowVal
     swingLowBar2 := pivotBarIdx
 
-isUptrend   = not na(swingHigh1) and not na(swingLow1) and swingHigh2 > swingHigh1 and swingLow2 > swingLow1
-isDowntrend = not na(swingHigh1) and not na(swingLow1) and swingHigh2 < swingHigh1 and swingLow2 < swingLow1
+// Structure break: price closes beyond the most recent prior swing
+// high/low. Stays "armed" until the opposite break occurs.
+var float breakLastHigh   = na
+var float breakLastLow    = na
+var bool  hadBullishBreak = false
+var bool  hadBearishBreak = false
+
+if not na(pivotHighVal)
+    breakLastHigh := pivotHighVal
+
+if not na(pivotLowVal)
+    breakLastLow := pivotLowVal
+
+bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh
+bearishBreakNow = not na(breakLastLow) and close < breakLastLow
+
+if bullishBreakNow
+    breakLastHigh    := close
+    hadBullishBreak   := true
+    hadBearishBreak   := false
+    if showDebug
+        label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+
+if bearishBreakNow
+    breakLastLow      := close
+    hadBearishBreak   := true
+    hadBullishBreak    := false
+    if showDebug
+        label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)
@@ -74,8 +100,8 @@ if rsiMa <= overbought
 if rsiMa >= oversold
     bearArmed := false
 
-bullTrigger = isUptrend and rsiMa > overbought and not bullArmed
-bearTrigger = isDowntrend and rsiMa < oversold and not bearArmed
+bullTrigger = hadBullishBreak and rsiMa > overbought and not bullArmed
+bearTrigger = hadBearishBreak and rsiMa < oversold and not bearArmed
 
 if bullTrigger
     bullArmed := true

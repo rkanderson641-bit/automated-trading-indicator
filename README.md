@@ -146,10 +146,13 @@ Each group has its own visibility toggle and color inputs.
 
 A standalone trend-line indicator for spotting reversal points on an
 already-overextended trend:
-- A "true trend" requires two consecutive higher swing highs AND higher
-  swing lows (uptrend), or two consecutive lower swing highs AND lower
-  swing lows (downtrend) — pure higher-high/higher-low structure, not just
-  a single pivot.
+- Trend direction uses a structure-break definition (same as
+  `reversal_confluence.pine`): a close beyond the most recent prior swing
+  high/low confirms a bullish/bearish trend immediately, without waiting
+  for a pullback to form a second confirming pivot — requiring a full
+  higher-high/higher-low pivot pair missed clean, sharp rallies entirely,
+  since by the time a pullback formed the second confirming pivot, RSI's
+  overbought peak had usually already passed.
 - Once RSI's moving average confirms the trend is stretched (above
   overbought during a confirmed uptrend = "overextended," or below
   oversold during a confirmed downtrend = "underextended"), the trend
