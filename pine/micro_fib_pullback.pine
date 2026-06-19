@@ -38,6 +38,8 @@ type FibLeg
     line  ln618
     label lbl50
     label lbl618
+    float lvl618
+    bool  isBullish
 
 var array<FibLeg> fibLegs = array.new<FibLeg>()
 
@@ -115,4 +117,21 @@ if not na(prevPivotVal) and justConfirmed
     lbl50  = label.new(bar_index, lvl50, text="50.00% (" + str.tostring(lvl50, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
     lbl618 = label.new(bar_index, lvl618, text="61.80% (" + str.tostring(lvl618, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
 
-    array.push(fibLegs, FibLeg.new(ln50=ln50, ln618=ln618, lbl50=lbl50, lbl618=lbl618))
+    array.push(fibLegs, FibLeg.new(ln50=ln50, ln618=ln618, lbl50=lbl50, lbl618=lbl618, lvl618=lvl618, isBullish=legColor == color.green))
+
+// ---------------------------------------------------------------------------
+// Drop any leg whose 61.8% level has been "disrespected" — a bullish
+// (support) zone breaking down through its 61.8% level, or a bearish
+// (resistance) zone breaking up through its 61.8% level — so only zones
+// that are still holding stay on the chart.
+// ---------------------------------------------------------------------------
+if array.size(fibLegs) > 0
+    for i = array.size(fibLegs) - 1 to 0
+        leg = array.get(fibLegs, i)
+        disrespected = leg.isBullish ? close < leg.lvl618 : close > leg.lvl618
+        if disrespected
+            line.delete(leg.ln50)
+            line.delete(leg.ln618)
+            label.delete(leg.lbl50)
+            label.delete(leg.lbl618)
+            array.remove(fibLegs, i)
