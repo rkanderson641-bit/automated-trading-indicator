@@ -55,12 +55,12 @@ class TestFibPullbackZone(unittest.TestCase):
 
 class TestOpeningRange(unittest.TestCase):
     def test_computes_range_within_window_only(self):
-        timestamps = [ts(8, 0), ts(8, 30), ts(8, 45), ts(9, 15), ts(9, 30), ts(10, 0)]
-        highs = [999, 10, 12, 15, 999, 999]
-        lows = [1, 9, 11, 8, -999, -999]
+        timestamps = [ts(8, 0), ts(8, 30), ts(8, 45), ts(9, 0), ts(9, 15), ts(10, 0)]
+        highs = [999, 10, 12, 999, 999, 999]
+        lows = [1, 9, 11, -999, -999, -999]
         ranges = compute_opening_range(timestamps, highs, lows)
         day = ts(8, 0).date()
-        self.assertEqual(ranges[day], (8, 15))
+        self.assertEqual(ranges[day], (9, 12))
 
 
 class TestScoreConfluence(unittest.TestCase):

@@ -110,7 +110,7 @@ def build_signals_with_confluence(timestamps, highs, lows, closes, fast_window, 
 def main():
     parser = argparse.ArgumentParser(
         description="Reversal-confluence SMA crossover indicator (fib pullback zone, "
-                     "8:30-9:30am CDT opening range, and swing structure breaks)"
+                     "8:30-9:00am CDT opening range, and swing structure breaks)"
     )
     parser.add_argument("ticker", help="Stock ticker symbol, e.g. AAPL")
     parser.add_argument("--period", default="5d", help="History period to fetch (default: 5d)")

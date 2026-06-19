@@ -25,7 +25,7 @@ three reversal confluences:
   mid-trend noise
 - **0.5-0.618 fibonacci pullback zone** — the classic institutional
   order-fill retracement zone measured from the most recent swing move
-- **8:30-9:30am America/Chicago opening range breakout (ORB)** — whether
+- **8:30-9:00am America/Chicago opening range breakout (ORB)** — whether
   price is trading outside the high/low range set in the first 30 minutes
   after the US cash open
 

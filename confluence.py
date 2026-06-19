@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 CHICAGO_TZ = ZoneInfo("America/Chicago")
 ORB_START = datetime.time(8, 30)
-ORB_END = datetime.time(9, 30)
+ORB_END = datetime.time(9, 0)
 
 
 def find_swing_points(prices, window=3):
@@ -72,7 +72,7 @@ def in_zone(price, zone, tolerance_pct=0.0015):
 
 
 def compute_opening_range(timestamps, highs, lows):
-    """Compute the 8:30-9:30 America/Chicago opening-range high/low for each
+    """Compute the 8:30-9:00 America/Chicago opening-range high/low for each
     trading day present in the bars. Returns {date: (range_low, range_high)}."""
     ranges = {}
     for ts, high, low in zip(timestamps, highs, lows):
