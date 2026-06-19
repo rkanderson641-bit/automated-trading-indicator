@@ -18,19 +18,19 @@ showDebug   = input.bool(false, "Show debug markers (structure break)", group="D
 // Trend direction uses a structure-break definition (same as
 // reversal_confluence.pine): a close beyond the most recent prior swing
 // high/low confirms a bullish/bearish trend immediately, without waiting
-// for a pullback to form a second confirming pivot. Requiring two full
-// higher-high/higher-low pivot pairs missed clean, sharp rallies entirely
-// -- by the time a pullback formed the second confirming pivot, RSI's
-// overbought peak had usually already passed.
+// for a pullback to form a second confirming pivot.
 //
-// Once RSI confirms the trend is overextended/underextended (its MA above
-// overbought during a confirmed uptrend, or below oversold during a
-// confirmed downtrend), the trend line is drawn starting at the swing low
-// (bullish) or swing high (bearish) that launched the move, through to
-// the most recent confirming swing point. From there it keeps extending
-// to each NEW confirming swing point as the trend continues, re-pivoting
-// its slope, until price closes through its current projected value -- a
-// trend break/reversal point.
+// Once RSI confirms the trend is overextended/underextended, the trend
+// line is drawn from the swing low (bullish) or swing high (bearish) that
+// launched the move through to the current bar/price, then keeps
+// extending to each NEW confirming swing point as the trend continues --
+// it doesn't need to sit exactly on every point, just connect two points
+// of the move while tracking overall trend structure. The line is only
+// invalidated when a genuine OPPOSITE structure break occurs (the same
+// definition used to confirm trend direction in the first place), not by
+// a tight price check against its most recent point -- RSI peaks/troughs
+// coincide with local price extremes almost by definition, so any tighter
+// check broke the line within a bar or two, before it could ever be seen.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -73,19 +73,54 @@ if not na(pivotLowVal)
 bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh
 bearishBreakNow = not na(breakLastLow) and close < breakLastLow
 
+var line  bullLine      = na
+var bool  trackingBull  = false
+var int   bullStartBar  = na
+var float bullStartPrice = na
+var int   bullLastBar   = na
+var float bullLastPrice = na
+
+var line  bearLine      = na
+var bool  trackingBear  = false
+var int   bearStartBar  = na
+var float bearStartPrice = na
+var int   bearLastBar   = na
+var float bearLastPrice = na
+
+bullBreak = false
+bearBreak = false
+
 if bullishBreakNow
-    breakLastHigh    := close
-    hadBullishBreak   := true
-    hadBearishBreak   := false
+    breakLastHigh   := close
+    hadBullishBreak := true
+    hadBearishBreak := false
     if showDebug
         label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    // A fresh bullish break invalidates any bearish line still being
+    // tracked -- the downtrend it was measuring no longer holds.
+    if trackingBear and not na(bearLine)
+        bearBreak := true
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+        line.delete(bearLine)
+        bearLine     := na
+        trackingBear := false
 
 if bearishBreakNow
-    breakLastLow      := close
-    hadBearishBreak   := true
-    hadBullishBreak    := false
+    breakLastLow    := close
+    hadBearishBreak := true
+    hadBullishBreak := false
     if showDebug
         label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    // A fresh bearish break invalidates any bullish line still being
+    // tracked -- the uptrend it was measuring no longer holds.
+    if trackingBull and not na(bullLine)
+        bullBreak := true
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+        line.delete(bullLine)
+        bullLine     := na
+        trackingBull := false
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)
@@ -108,28 +143,9 @@ if bullTrigger
 if bearTrigger
     bearArmed := true
 
-var line  bullLine        = na
-var bool  trackingBull     = false
-var int   bullStartBar     = na
-var float bullStartPrice   = na
-var int   bullLastBar      = na
-var float bullLastPrice    = na
-
-var line  bearLine        = na
-var bool  trackingBear     = false
-var int   bearStartBar     = na
-var float bearStartPrice   = na
-var int   bearLastBar      = na
-var float bearLastPrice    = na
-
 if bullTrigger and not na(swingLowBar1)
     if not na(bullLine)
         line.delete(bullLine)
-    // Anchor the second point at the CURRENT bar/price rather than the
-    // older confirmed pivot -- using the pivot pair's slope projected
-    // across the (potentially large) gap to the trigger bar could already
-    // overshoot current price, causing an instant self-break before the
-    // line was ever visible.
     bullStartBar   := swingLowBar1
     bullStartPrice := swingLow1
     bullLastBar    := bar_index
@@ -153,43 +169,18 @@ if bearTrigger and not na(swingHighBar1)
 
 // ---------------------------------------------------------------------------
 // While still tracking, extend the line to each new confirming swing point
-// in the same direction (re-pivoting its slope). The break check compares
-// price against the line's latest actual anchor point (the most recent
-// confirmed swing low/high it passes through) rather than an extrapolated
-// diagonal projection -- projecting the steep slope of a fresh impulsive
-// move forward even one bar is often already steeper than price can
-// sustain, which caused near-instant false breaks.
+// in the same direction, re-pivoting its slope. No price-based break check
+// here -- invalidation is handled above via the opposite structure break.
 // ---------------------------------------------------------------------------
-bullBreak = false
-bearBreak = false
+if trackingBull and not na(bullLine) and not na(pivotLowVal) and pivotLowVal > bullLastPrice
+    bullLastBar   := pivotBarIdx
+    bullLastPrice := pivotLowVal
+    line.set_xy2(bullLine, bullLastBar, bullLastPrice)
 
-if trackingBull and not na(bullLine)
-    if not na(pivotLowVal) and pivotLowVal > bullLastPrice
-        bullLastBar   := pivotBarIdx
-        bullLastPrice := pivotLowVal
-        line.set_xy2(bullLine, bullLastBar, bullLastPrice)
-
-    if close < bullLastPrice
-        bullBreak := true
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
-        line.delete(bullLine)
-        bullLine     := na
-        trackingBull := false
-
-if trackingBear and not na(bearLine)
-    if not na(pivotHighVal) and pivotHighVal < bearLastPrice
-        bearLastBar   := pivotBarIdx
-        bearLastPrice := pivotHighVal
-        line.set_xy2(bearLine, bearLastBar, bearLastPrice)
-
-    if close > bearLastPrice
-        bearBreak := true
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
-        line.delete(bearLine)
-        bearLine     := na
-        trackingBear := false
+if trackingBear and not na(bearLine) and not na(pivotHighVal) and pivotHighVal < bearLastPrice
+    bearLastBar   := pivotBarIdx
+    bearLastPrice := pivotHighVal
+    line.set_xy2(bearLine, bearLastBar, bearLastPrice)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")

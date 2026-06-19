@@ -149,23 +149,25 @@ already-overextended trend:
 - Trend direction uses a structure-break definition (same as
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
-  for a pullback to form a second confirming pivot — requiring a full
-  higher-high/higher-low pivot pair missed clean, sharp rallies entirely,
-  since by the time a pullback formed the second confirming pivot, RSI's
-  overbought peak had usually already passed.
+  for a pullback to form a second confirming pivot.
 - Once RSI's moving average confirms the trend is stretched (above
   overbought during a confirmed uptrend = "overextended," or below
   oversold during a confirmed downtrend = "underextended"), the trend
-  line is drawn starting at the actual origin of that trend leg through
-  to the most recent confirming swing point. The overextended/
-  underextended check uses a level-based "armed" latch rather than a
-  same-bar crossover, so it still fires even when the swing-confirmation
-  lag means the trend structure confirms a few bars after RSI actually
-  crossed the threshold.
+  line is drawn from the swing low/high that launched the move through to
+  the current bar/price. The overextended/underextended check uses a
+  level-based "armed" latch rather than a same-bar crossover, so it still
+  fires even when the swing-confirmation lag means the trend structure
+  confirms a few bars after RSI actually crossed the threshold.
 - From there, the line keeps extending to each new confirming swing point
-  as the trend continues, re-pivoting its slope each time, until price
-  closes through its current projected value — flagged as a trend
-  break/reversal point with its own label and `alertcondition()`.
+  as the trend continues, re-pivoting its slope each time. It doesn't
+  need to sit exactly on every point in between — just connect two points
+  of the move while tracking overall trend structure.
+- The line is only invalidated by a genuine OPPOSITE structure break (the
+  same definition used to confirm trend direction), not a tight check
+  against its own most recent point — RSI peaks/troughs coincide with
+  local price extremes almost by definition, so a tighter check broke the
+  line within a bar or two, before it could ever be seen. A break is
+  flagged with its own label and `alertcondition()`.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
