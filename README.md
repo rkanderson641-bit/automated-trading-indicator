@@ -47,25 +47,23 @@ calculate_sma(prices, window=3)
 
 Pine Script is a different language from Python, so these are separate,
 hand-written implementations — they can't be pasted into the Pine Editor
-directly from `main.py`. There are four independent indicators so each
+directly from `main.py`. There are five independent indicators so each
 piece can be added or removed on its own to declutter the chart without
 touching the others:
 
 ### [pine/reversal_confluence.pine](pine/reversal_confluence.pine)
 
 SMA crossover signals scored against a swing structure break confluence,
-plus auxiliary chart overlays:
+plus an auxiliary overlay:
 - SMA crossover BUY/SELL signals, scored against confluences and plotted
   with a confluence score label
 - ATR-based take-profit/stop-loss lines for the most recently printed
   signal (default 1.5x ATR stop, 3x ATR target)
-- 1H, 4H, and Daily 50/200 SMA lines pulled via `request.security`,
-  intended for use on a 5-minute chart
-- Two `alertcondition()`s for setting up TradingView alerts on qualifying
+- An `alertcondition()` for setting up TradingView alerts on qualifying
   signals
 
-All toggles and lengths (TP/SL multiples, which timeframe SMAs to show)
-are exposed as inputs, grouped by feature.
+All toggles and lengths (TP/SL multiples, etc.) are exposed as inputs,
+grouped by feature.
 
 ### [pine/orb_session_range.pine](pine/orb_session_range.pine)
 
@@ -85,39 +83,43 @@ to declutter the chart.
 
 ### [pine/micro_fib_pullback.pine](pine/micro_fib_pullback.pine)
 
-A standalone 0.5/0.618 fib retracement indicator, drawn in the familiar
-manual-tool style: plain dashed lines labeled `50.00% (price)` and
-`61.80% (price)`, extending right. The fib is only shown while a pullback
-is actually happening — not during the impulsive trend leg itself and not
-when there's no active setup — to keep the chart decluttered.
+A standalone 0.5/0.618 fib retracement indicator built on a standard
+ZigZag swing detector, drawn in the familiar manual-tool style: plain
+dashed lines labeled `50.00% (price)` and `61.80% (price)`, extending
+right.
 
-Sequence per setup:
-1. **Structure break**: tracks the most recent *significant* swing
-   high/low (`structureBars` lookback/lookahead, default 8 — intentionally
-   wider than a noisy short pivot so this doesn't fire on every minor
-   wiggle). The moment price closes beyond one of these levels, a trend
-   leg begins, originating from the swing low that preceded a bullish
-   break (or swing high that preceded a bearish break) — i.e. the launch
-   point of the move. This single rule covers both a break of established
-   trend structure and emerging from a consolidation/range, since a
-   range's boundary is mechanically the same kind of level.
-2. **Impulsive move**: the trend's running high (bullish) or low
-   (bearish) is tracked internally, but nothing is drawn yet.
-3. **Minimum move filter**: once a confirmed pivot against the trend
-   direction appears, it only qualifies as a real pullback if the
-   impulsive leg (origin to that pivot) traveled at least
-   `minMoveAtrMult` x ATR (default 1.5x, ATR length 14) — filtering out
-   small moves that aren't a meaningful trend. If the move is too small,
-   the pivot is ignored and impulsive tracking continues.
-4. **Confirmed pullback**: once a qualifying pivot locks in "the last
-   high/low of the trend before it reversed," the fib lines appear —
-   green for a bullish trend/pullback, red for a bearish one — measured
-   from the origin swing low/high to that locked extreme.
-5. **Resolution**: the fib disappears again once either (a) price fully
-   invalidates the setup by closing back through the origin level, or (b)
-   the trend resumes past the locked extreme (no longer a pullback), at
-   which point tracking goes back to step 2 with the new extreme until the
-   next qualifying pullback.
+- A new swing point only confirms once price reverses from the current
+  candidate extreme by at least `thresholdMult` x ATR (default 4x
+  ATR(20)) — a confirmed pivot can never be "un-confirmed," which avoids
+  the whipsaw that simpler structure-break heuristics ran into.
+- The fib for each confirmed leg is colored green (bullish/support) or
+  red (bearish/resistance), measured between the last two confirmed swing
+  points.
+- Only the most recent `maxActiveLegs` (default 2 — the current trend's
+  leg plus the immediately preceding opposing leg) stay on the chart, so
+  you see both a "true trend" entry zone and the opposing support/
+  resistance confluence behind it, not the whole session's history.
+- A leg is dropped immediately once it's no longer "unvisited or
+  respected" — i.e. once price closes through its 61.8% level against it
+  without holding.
+
+### [pine/key_price_levels.pine](pine/key_price_levels.pine)
+
+A standalone "key price levels" overlay, replicating the kind of
+multi-timeframe confluence levels traders mark up by hand:
+- **Multi-timeframe SMAs**: Daily, 4H, and 1H 50/200 SMAs, each drawn as a
+  flat reference line + right-edge label at the SMA's current value
+  (not the historical curve), so a higher-timeframe SMA is visible on a
+  low-timeframe chart without needing to switch timeframes. These move
+  live as the higher-timeframe candle prints, reflecting the most
+  current value of that timeframe.
+- **Overnight session high/low** (`ONH`/`ONL`): tracked live during a
+  configurable overnight session window (default 18:00-08:30
+  America/New_York), then frozen for the rest of the day.
+- **Previous day high/low** (`PDH`/`PDL`).
+- **Today's opening price** (`OP`): today's daily bar's open.
+
+Each group has its own visibility toggle and color inputs.
 
 ### Using any script
 

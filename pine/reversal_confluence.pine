@@ -14,10 +14,6 @@ atrLen         = input.int(14, "ATR Length", minval=1, group="Take Profit / Stop
 slAtrMult      = input.float(1.5, "Stop Loss ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
 tpAtrMult      = input.float(3.0, "Take Profit ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
 
-show1H         = input.bool(true, "Show 1H 50/200 SMA", group="Multi-Timeframe SMA")
-show4H         = input.bool(true, "Show 4H 50/200 SMA", group="Multi-Timeframe SMA")
-showDaily      = input.bool(true, "Show Daily 50/200 SMA", group="Multi-Timeframe SMA")
-
 // ---------------------------------------------------------------------------
 // Fast/slow SMA crossover
 // ---------------------------------------------------------------------------
@@ -105,24 +101,6 @@ if showTPSL and (plotBuy or plotSell)
     slLine  := line.new(bar_index, sl, bar_index + 1, sl, extend=extend.right, color=color.red, width=1, style=line.style_dashed)
     tpLabel := label.new(bar_index, tp, text="TP " + str.tostring(tp, format.mintick), style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
     slLabel := label.new(bar_index, sl, text="SL " + str.tostring(sl, format.mintick), style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
-
-// ---------------------------------------------------------------------------
-// Multi-timeframe SMA levels (1H, 4H, Daily 50/200), intended for use on a
-// 5-minute chart but computed independently of the chart's own timeframe.
-// ---------------------------------------------------------------------------
-sma50_1h  = request.security(syminfo.tickerid, "60", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
-sma200_1h = request.security(syminfo.tickerid, "60", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
-sma50_4h  = request.security(syminfo.tickerid, "240", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
-sma200_4h = request.security(syminfo.tickerid, "240", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
-sma50_d   = request.security(syminfo.tickerid, "D", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
-sma200_d  = request.security(syminfo.tickerid, "D", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
-
-plot(show1H ? sma50_1h : na, "1H SMA 50", color=color.new(color.blue, 0), linewidth=1)
-plot(show1H ? sma200_1h : na, "1H SMA 200", color=color.new(color.blue, 55), linewidth=1)
-plot(show4H ? sma50_4h : na, "4H SMA 50", color=color.new(color.orange, 0), linewidth=1)
-plot(show4H ? sma200_4h : na, "4H SMA 200", color=color.new(color.orange, 55), linewidth=1)
-plot(showDaily ? sma50_d : na, "Daily SMA 50", color=color.new(color.white, 0), linewidth=1)
-plot(showDaily ? sma200_d : na, "Daily SMA 200", color=color.new(color.white, 55), linewidth=1)
 
 plot(fastSMA, "Fast SMA", color=color.blue)
 plot(slowSMA, "Slow SMA", color=color.orange)
