@@ -41,8 +41,8 @@ addSRLevel(float price, string role) =>
         if array.size(srLevels) >= maxLevels
             oldest = array.shift(srLevels)
             line.delete(oldest.ln)
-        lineColor = role == "support" ? color.green : color.red
-        ln = line.new(bar_index, price, bar_index + 1, price, extend=extend.right, color=lineColor, width=1, style=line.style_dashed)
+        lineColor = role == "support" ? color.blue : color.orange
+        ln = line.new(bar_index, price, bar_index + 1, price, extend=extend.right, color=lineColor, width=1, style=line.style_dotted)
         array.push(srLevels, SRLevel.new(price=price, role=role, ln=ln))
 
 if not na(pivotHighVal)
@@ -56,11 +56,11 @@ if array.size(srLevels) > 0
         lvl = array.get(srLevels, i)
         if lvl.role == "support" and close < lvl.price * (1 - tolerancePct)
             lvl.role := "resistance"
-            line.set_color(lvl.ln, color.red)
+            line.set_color(lvl.ln, color.orange)
             if showFlipLabels
-                label.new(bar_index, lvl.price, text="S->R", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.tiny)
+                label.new(bar_index, lvl.price, text="S->R", style=label.style_label_down, color=color.new(color.orange, 70), textcolor=color.white, size=size.tiny)
         else if lvl.role == "resistance" and close > lvl.price * (1 + tolerancePct)
             lvl.role := "support"
-            line.set_color(lvl.ln, color.green)
+            line.set_color(lvl.ln, color.blue)
             if showFlipLabels
-                label.new(bar_index, lvl.price, text="R->S", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.tiny)
+                label.new(bar_index, lvl.price, text="R->S", style=label.style_label_up, color=color.new(color.blue, 70), textcolor=color.white, size=size.tiny)
