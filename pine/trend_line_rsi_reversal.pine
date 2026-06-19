@@ -12,7 +12,7 @@ oversold    = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor   = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor   = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels  = input.bool(true, "Show signal/break labels", group="Style")
-showDebug   = input.bool(false, "Show debug markers (structure break)", group="Debug")
+showDebug   = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
 // Trend direction uses a structure-break definition (same as
