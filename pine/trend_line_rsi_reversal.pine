@@ -4,15 +4,17 @@ indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labe
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-swingBars   = input.int(8, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
-rsiLen      = input.int(14, "RSI Length", minval=1, group="RSI")
-rsiMaLen    = input.int(9, "RSI MA Length", minval=1, group="RSI")
-overbought  = input.float(70, "Overbought (overextended)", group="RSI")
-oversold    = input.float(30, "Oversold (underextended)", group="RSI")
-bullColor   = input.color(color.green, "Bullish Trend Line Color", group="Style")
-bearColor   = input.color(color.red, "Bearish Trend Line Color", group="Style")
-showLabels  = input.bool(true, "Show signal/break labels", group="Style")
-showDebug   = input.bool(true, "Show debug markers (structure break)", group="Debug")
+swingBars       = input.int(8, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
+atrLen          = input.int(14, "ATR Length", minval=1, group="Trend Structure")
+minBreakAtrMult = input.float(1.0, "Minimum break size (x ATR)", minval=0.1, step=0.1, group="Trend Structure")
+rsiLen          = input.int(14, "RSI Length", minval=1, group="RSI")
+rsiMaLen        = input.int(9, "RSI MA Length", minval=1, group="RSI")
+overbought      = input.float(70, "Overbought (overextended)", group="RSI")
+oversold        = input.float(30, "Oversold (underextended)", group="RSI")
+bullColor       = input.color(color.green, "Bullish Trend Line Color", group="Style")
+bearColor       = input.color(color.red, "Bearish Trend Line Color", group="Style")
+showLabels      = input.bool(true, "Show signal/break labels", group="Style")
+showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
 // Trend direction uses a structure-break definition (same as
@@ -58,7 +60,16 @@ if not na(pivotLowVal)
     swingLowBar2 := pivotBarIdx
 
 // Structure break: price closes beyond the most recent prior swing
-// high/low. Stays "armed" until the opposite break occurs.
+// high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
+// opposite break occurs. Without the ATR margin, any close even a tick
+// beyond a recent pivot counted as a "break" -- in a choppy multi-day
+// range with many qualifying pivots, that produced a break almost every
+// 2-4 bars in alternating directions, deleting any trend line within a
+// bar or two of it being created and pre-empting the real reversal's
+// TREND BREAK label with an earlier false one.
+// ---------------------------------------------------------------------------
+atrVal = ta.atr(atrLen)
+
 var float breakLastHigh   = na
 var float breakLastLow    = na
 var bool  hadBullishBreak = false
@@ -70,8 +81,8 @@ if not na(pivotHighVal)
 if not na(pivotLowVal)
     breakLastLow := pivotLowVal
 
-bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh
-bearishBreakNow = not na(breakLastLow) and close < breakLastLow
+bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
+bearishBreakNow = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
 
 var line  bullLine      = na
 var bool  trackingBull  = false
