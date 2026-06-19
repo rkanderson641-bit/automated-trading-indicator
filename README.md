@@ -142,6 +142,28 @@ multi-timeframe confluence levels traders mark up by hand:
 
 Each group has its own visibility toggle and color inputs.
 
+### [pine/trend_line_rsi_reversal.pine](pine/trend_line_rsi_reversal.pine)
+
+A standalone trend-line indicator for spotting reversal points on an
+already-overextended trend:
+- A "true trend" requires two consecutive higher swing highs AND higher
+  swing lows (uptrend), or two consecutive lower swing highs AND lower
+  swing lows (downtrend) — pure higher-high/higher-low structure, not just
+  a single pivot.
+- The trend line itself connects the last two swing lows (uptrend,
+  ascending support) or last two swing highs (downtrend, descending
+  resistance) — but it only gets drawn once RSI confirms the trend is
+  stretched: RSI's moving average crossing above overbought during a
+  confirmed uptrend ("overextended"), or below oversold during a
+  confirmed downtrend ("underextended").
+- Once drawn, a close through the line's current projected value is
+  flagged as a trend break/reversal point, with its own label and
+  `alertcondition()`.
+
+RSI itself isn't plotted by this script (it's overlay-only, used purely
+to gate when a line gets drawn) — pair it with a regular RSI indicator in
+its own pane for visual confirmation.
+
 ### Using any script
 
 1. Open any chart on [TradingView](https://www.tradingview.com)

@@ -1,0 +1,117 @@
+//@version=6
+indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+swingBars   = input.int(5, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
+rsiLen      = input.int(14, "RSI Length", minval=1, group="RSI")
+rsiMaLen    = input.int(9, "RSI MA Length", minval=1, group="RSI")
+overbought  = input.float(70, "Overbought (overextended)", group="RSI")
+oversold    = input.float(30, "Oversold (underextended)", group="RSI")
+bullColor   = input.color(color.green, "Bullish Trend Line Color", group="Style")
+bearColor   = input.color(color.red, "Bearish Trend Line Color", group="Style")
+showLabels  = input.bool(true, "Show signal/break labels", group="Style")
+
+// ---------------------------------------------------------------------------
+// A "true trend" requires two consecutive higher swing highs AND higher
+// swing lows (uptrend), or two consecutive lower swing highs AND lower
+// swing lows (downtrend). The trend line itself connects the last two
+// swing lows (uptrend, ascending support) or last two swing highs
+// (downtrend, descending resistance).
+//
+// The line only gets drawn once RSI confirms the trend is overextended
+// (RSI MA crosses above overbought, during a confirmed uptrend) or
+// underextended (RSI MA crosses below oversold, during a confirmed
+// downtrend) — i.e. exactly when a reversal becomes more likely despite
+// the trend still being structurally intact. Once drawn, a close through
+// the line's current projected value is flagged as a trend break.
+// ---------------------------------------------------------------------------
+pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
+pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
+pivotBarIdx  = bar_index - swingBars
+
+var float swingHigh1    = na
+var float swingHigh2    = na
+var int   swingHighBar1 = na
+var int   swingHighBar2 = na
+var float swingLow1     = na
+var float swingLow2     = na
+var int   swingLowBar1  = na
+var int   swingLowBar2  = na
+
+if not na(pivotHighVal)
+    swingHigh1    := swingHigh2
+    swingHighBar1 := swingHighBar2
+    swingHigh2    := pivotHighVal
+    swingHighBar2 := pivotBarIdx
+
+if not na(pivotLowVal)
+    swingLow1    := swingLow2
+    swingLowBar1 := swingLowBar2
+    swingLow2    := pivotLowVal
+    swingLowBar2 := pivotBarIdx
+
+isUptrend   = not na(swingHigh1) and not na(swingLow1) and swingHigh2 > swingHigh1 and swingLow2 > swingLow1
+isDowntrend = not na(swingHigh1) and not na(swingLow1) and swingHigh2 < swingHigh1 and swingLow2 < swingLow1
+
+rsiVal = ta.rsi(close, rsiLen)
+rsiMa  = ta.sma(rsiVal, rsiMaLen)
+
+bullTrigger = isUptrend and ta.crossover(rsiMa, overbought)
+bearTrigger = isDowntrend and ta.crossunder(rsiMa, oversold)
+
+var line bullLine     = na
+var line bearLine     = na
+var bool trackingBull = false
+var bool trackingBear = false
+
+if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
+    if not na(bullLine)
+        line.delete(bullLine)
+    bullLine     := line.new(swingLowBar1, swingLow1, swingLowBar2, swingLow2, extend=extend.right, color=bullColor, width=2)
+    trackingBull := true
+    if showLabels
+        label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
+
+if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
+    if not na(bearLine)
+        line.delete(bearLine)
+    bearLine     := line.new(swingHighBar1, swingHigh1, swingHighBar2, swingHigh2, extend=extend.right, color=bearColor, width=2)
+    trackingBear := true
+    if showLabels
+        label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
+// Trend break detection: a close beyond the line's current projected
+// value invalidates it and flags a potential reversal point.
+// ---------------------------------------------------------------------------
+bullBreak = false
+bearBreak = false
+
+if trackingBull and not na(bullLine)
+    bullSlope     = (swingLow2 - swingLow1) / (swingLowBar2 - swingLowBar1)
+    bullProjected = swingLow2 + bullSlope * (bar_index - swingLowBar2)
+    if close < bullProjected
+        bullBreak := true
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+        line.delete(bullLine)
+        bullLine     := na
+        trackingBull := false
+
+if trackingBear and not na(bearLine)
+    bearSlope     = (swingHigh2 - swingHigh1) / (swingHighBar2 - swingHighBar1)
+    bearProjected = swingHigh2 + bearSlope * (bar_index - swingHighBar2)
+    if close > bearProjected
+        bearBreak := true
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+        line.delete(bearLine)
+        bearLine     := na
+        trackingBear := false
+
+alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI crossed overbought -- watch for reversal")
+alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI crossed oversold -- watch for reversal")
+alertcondition(bullBreak, title="Bullish Trend Line Broken", message="Price closed below the overextended uptrend line")
+alertcondition(bearBreak, title="Bearish Trend Line Broken", message="Price closed above the underextended downtrend line")
