@@ -16,8 +16,8 @@ colorH1_50  = input.color(color.new(color.fuchsia, 30), "1H 50 SMA Color", group
 colorH1_200 = input.color(color.new(color.fuchsia, 0), "1H 200 SMA Color", group="Multi-Timeframe SMA")
 
 showOvernight   = input.bool(true, "Show Overnight High/Low", group="Overnight Session")
-overnightSess   = input.session("1800-0830", "Overnight Session", group="Overnight Session")
-overnightTz     = input.string("America/New_York", "Overnight Session Timezone", group="Overnight Session")
+overnightSess   = input.session("1700-0730", "Overnight Session", group="Overnight Session")
+overnightTz     = input.string("America/Chicago", "Overnight Session Timezone", group="Overnight Session")
 colorONH        = input.color(color.new(color.red, 0), "Overnight High Color", group="Overnight Session")
 colorONL        = input.color(color.new(color.green, 0), "Overnight Low Color", group="Overnight Session")
 
