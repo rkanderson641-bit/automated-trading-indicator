@@ -1,18 +1,30 @@
 //@version=6
-indicator("8:30-9:00 CDT Opening Range (ORB)", overlay=true, max_boxes_count=500)
+indicator("Opening Range Breakout (ORB) Sessions", overlay=true, max_boxes_count=500, max_lines_count=500)
 
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-sessionStr   = input.session("0830-0900", "Opening Range Session")
-sessionTz    = input.string("America/Chicago", "Session Timezone")
-boxColor     = input.color(color.purple, "Box Color")
-extendBoxes  = input.bool(true, "Extend box through rest of session")
+showMain      = input.bool(true, "Show 8:30-9:00 CDT Opening Range", group="8:30-9:00 Main ORB")
+sessionStr    = input.session("0830-0900", "Session", group="8:30-9:00 Main ORB")
+sessionTz     = input.string("America/Chicago", "Timezone", group="8:30-9:00 Main ORB")
+boxColor      = input.color(color.purple, "Box Color", group="8:30-9:00 Main ORB")
+extendBoxes   = input.bool(true, "Extend box through rest of session", group="8:30-9:00 Main ORB")
+
+showOvernight  = input.bool(true, "Show 7:30-7:45 CDT Overnight ORB", group="7:30-7:45 Overnight ORB")
+overnightSess  = input.session("0730-0745", "Session", group="7:30-7:45 Overnight ORB")
+overnightTz    = input.string("America/Chicago", "Timezone", group="7:30-7:45 Overnight ORB")
+overnightBands = input.int(8, "Gradient bands", minval=2, maxval=20, group="7:30-7:45 Overnight ORB")
+extendOvernight = input.bool(true, "Extend through rest of session", group="7:30-7:45 Overnight ORB")
+
+showNyAm      = input.bool(true, "Show 8:30-8:45 CDT NY AM 15min ORB", group="8:30-8:45 NY AM ORB")
+nyAmSess      = input.session("0830-0845", "Session", group="8:30-8:45 NY AM ORB")
+nyAmTz        = input.string("America/Chicago", "Timezone", group="8:30-8:45 NY AM ORB")
+nyAmColor     = input.color(color.yellow, "Line Color", group="8:30-8:45 NY AM ORB")
+extendNyAm    = input.bool(true, "Extend lines through rest of session", group="8:30-8:45 NY AM ORB")
 
 // ---------------------------------------------------------------------------
-// Track the high/low of the session window each day, drawn as a translucent
-// box so candles remain visible through it. Independent of any other
-// indicator so it can be added/removed on its own to declutter the chart.
+// 8:30-9:00 CDT main opening range, drawn as a translucent box so candles
+// remain visible through it.
 // ---------------------------------------------------------------------------
 orbSession   = time(timeframe.period, sessionStr, sessionTz)
 inSession    = not na(orbSession)
@@ -22,24 +34,103 @@ var float orbHigh = na
 var float orbLow  = na
 var box   orbBox  = na
 
-if sessionStart
-    orbHigh := high
-    orbLow  := low
-    orbBox  := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=boxColor, border_width=1, bgcolor=color.new(boxColor, 90))
-else if inSession
-    orbHigh := math.max(orbHigh, high)
-    orbLow  := math.min(orbLow, low)
-    box.set_top(orbBox, orbHigh)
-    box.set_bottom(orbBox, orbLow)
-    box.set_right(orbBox, bar_index)
-else if extendBoxes and not na(orbBox)
-    // Keep the rectangle extending across the rest of the session for
-    // visual reference, without growing its top/bottom further.
-    box.set_right(orbBox, bar_index)
+if showMain
+    if sessionStart
+        orbHigh := high
+        orbLow  := low
+        orbBox  := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=boxColor, border_width=1, bgcolor=color.new(boxColor, 90))
+    else if inSession
+        orbHigh := math.max(orbHigh, high)
+        orbLow  := math.min(orbLow, low)
+        box.set_top(orbBox, orbHigh)
+        box.set_bottom(orbBox, orbLow)
+        box.set_right(orbBox, bar_index)
+    else if extendBoxes and not na(orbBox)
+        box.set_right(orbBox, bar_index)
 
-// "Disrespected" = price closes outside the established opening range.
 brokeAbove = not na(orbHigh) and close > orbHigh
 brokeBelow = not na(orbLow) and close < orbLow
 
 alertcondition(brokeAbove, title="ORB Disrespected Above", message="Price closed above the opening range high")
 alertcondition(brokeBelow, title="ORB Disrespected Below", message="Price closed below the opening range low")
+
+// ---------------------------------------------------------------------------
+// 7:30-7:45 CDT overnight ORB, drawn as a gradient of stacked translucent
+// white bands fading from more opaque (near the range high) to more
+// transparent (near the range low), instead of one flat-colored box.
+// ---------------------------------------------------------------------------
+onSession   = time(timeframe.period, overnightSess, overnightTz)
+inOnSession = not na(onSession)
+onStart     = inOnSession and na(onSession[1])
+
+var float onHigh = na
+var float onLow  = na
+var array<box> onBands = array.new<box>()
+
+deleteOnBands() =>
+    if array.size(onBands) > 0
+        for i = 0 to array.size(onBands) - 1
+            box.delete(array.get(onBands, i))
+    array.clear(onBands)
+
+if showOvernight
+    if onStart
+        deleteOnBands()
+        onHigh := high
+        onLow  := low
+        range_ = math.max(high - low, syminfo.mintick)
+        for i = 0 to overnightBands - 1
+            bandBottom = low + range_ * i / overnightBands
+            bandTop    = low + range_ * (i + 1) / overnightBands
+            transp     = int(60 + 35 * i / (overnightBands - 1))
+            array.push(onBands, box.new(left=bar_index, top=bandTop, bottom=bandBottom, right=bar_index, border_color=color.new(color.white, 100), bgcolor=color.new(color.white, transp)))
+    else if inOnSession
+        onHigh := math.max(onHigh, high)
+        onLow  := math.min(onLow, low)
+        range_ = math.max(onHigh - onLow, syminfo.mintick)
+        if array.size(onBands) == overnightBands
+            for i = 0 to overnightBands - 1
+                bandBox    = array.get(onBands, i)
+                bandBottom = onLow + range_ * i / overnightBands
+                bandTop    = onLow + range_ * (i + 1) / overnightBands
+                box.set_top(bandBox, bandTop)
+                box.set_bottom(bandBox, bandBottom)
+                box.set_right(bandBox, bar_index)
+    else if extendOvernight and array.size(onBands) > 0
+        for i = 0 to array.size(onBands) - 1
+            box.set_right(array.get(onBands, i), bar_index)
+
+// ---------------------------------------------------------------------------
+// 8:30-8:45 CDT NY AM 15-minute ORB, drawn as opaque high/low lines rather
+// than a box.
+// ---------------------------------------------------------------------------
+nyAmSession   = time(timeframe.period, nyAmSess, nyAmTz)
+inNyAmSession = not na(nyAmSession)
+nyAmStart     = inNyAmSession and na(nyAmSession[1])
+
+var float nyAmHigh    = na
+var float nyAmLow     = na
+var int   nyAmStartBar = na
+var line  nyAmHighLn  = na
+var line  nyAmLowLn   = na
+
+if showNyAm
+    if nyAmStart
+        if not na(nyAmHighLn)
+            line.delete(nyAmHighLn)
+            line.delete(nyAmLowLn)
+        nyAmHigh     := high
+        nyAmLow      := low
+        nyAmStartBar := bar_index
+        nyAmHighLn   := line.new(bar_index, high, bar_index, high, extend=extend.right, color=nyAmColor, width=2)
+        nyAmLowLn    := line.new(bar_index, low, bar_index, low, extend=extend.right, color=nyAmColor, width=2)
+    else if inNyAmSession
+        nyAmHigh := math.max(nyAmHigh, high)
+        nyAmLow  := math.min(nyAmLow, low)
+        line.set_xy1(nyAmHighLn, nyAmStartBar, nyAmHigh)
+        line.set_xy2(nyAmHighLn, bar_index, nyAmHigh)
+        line.set_xy1(nyAmLowLn, nyAmStartBar, nyAmLow)
+        line.set_xy2(nyAmLowLn, bar_index, nyAmLow)
+    else if extendNyAm and not na(nyAmHighLn)
+        line.set_xy2(nyAmHighLn, bar_index, nyAmHigh)
+        line.set_xy2(nyAmLowLn, bar_index, nyAmLow)

@@ -67,11 +67,20 @@ grouped by feature.
 
 ### [pine/orb_session_range.pine](pine/orb_session_range.pine)
 
-A standalone 8:30-9:00am America/Chicago opening-range indicator, drawn as
-a translucent box so candles remain visible through it. Kept separate so
-you can remove just this indicator from the chart if the range gets
-"disrespected" (broken) and you no longer want it cluttering the chart.
-Exposes its own `alertcondition()`s for closes above/below the range.
+A standalone indicator with three independent opening-range windows, each
+with its own visibility toggle, session/timezone inputs, and styling — all
+default to CDT (America/Chicago):
+- **8:30-9:00 main ORB**: drawn as a translucent box so candles remain
+  visible through it. Exposes `alertcondition()`s for closes above/below
+  the range ("disrespected").
+- **7:30-7:45 overnight ORB**: drawn as a gradient of stacked translucent
+  white bands fading from more opaque near the range high to more
+  transparent near the range low, instead of one flat-colored box.
+- **8:30-8:45 NY AM 15-minute ORB**: drawn as opaque high/low lines
+  instead of a box.
+
+All three automatically apply each trading day, extending through the
+rest of the session once their window closes (configurable per range).
 
 ### [pine/auto_support_resistance.pine](pine/auto_support_resistance.pine)
 
