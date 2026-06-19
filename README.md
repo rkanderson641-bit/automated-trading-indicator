@@ -112,12 +112,17 @@ multi-timeframe confluence levels traders mark up by hand:
   (not the historical curve), so a higher-timeframe SMA is visible on a
   low-timeframe chart without needing to switch timeframes. These move
   live as the higher-timeframe candle prints, reflecting the most
-  current value of that timeframe.
+  current value of that timeframe. These span the whole chart since
+  there's no single "origin candle" for a continuously evolving average.
 - **Overnight session high/low** (`ONH`/`ONL`): tracked live during a
-  configurable overnight session window (default 18:00-08:30
-  America/New_York), then frozen for the rest of the day.
-- **Previous day high/low** (`PDH`/`PDL`).
-- **Today's opening price** (`OP`): today's daily bar's open.
+  configurable overnight session window (default 1700-0730
+  America/Chicago, i.e. CDT), then frozen for the rest of the day. The
+  line starts exactly at the bar where that high/low printed.
+- **Previous day high/low** (`PDH`/`PDL`): the line starts exactly at the
+  bar in yesterday's session where that high/low actually printed, not at
+  today's open.
+- **Today's opening price** (`OP`): today's daily bar's open, with the
+  line starting at today's first bar.
 
 Each group has its own visibility toggle and color inputs.
 
