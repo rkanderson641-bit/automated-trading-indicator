@@ -1,0 +1,66 @@
+//@version=6
+indicator("Auto Support/Resistance (Flip)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+swingBars      = input.int(3, "Swing Lookback/Lookahead Bars", minval=1)
+tolerancePctIn = input.float(0.15, "Flip Tolerance %", minval=0.0, step=0.01)
+maxLevels      = input.int(10, "Max levels tracked", minval=1, maxval=50)
+showFlipLabels = input.bool(true, "Label levels when they flip")
+
+tolerancePct = tolerancePctIn / 100
+
+// ---------------------------------------------------------------------------
+// Automatic support/resistance from prior swing structure, flipping role
+// (support -> resistance, resistance -> support) once price closes through.
+// Kept as a standalone indicator so it can be added/removed on its own to
+// declutter the chart independently of any other indicator.
+// ---------------------------------------------------------------------------
+pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
+pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
+
+type SRLevel
+    float price
+    string role
+    line ln
+
+var array<SRLevel> srLevels = array.new<SRLevel>()
+
+isDuplicateLevel(float price) =>
+    found = false
+    if array.size(srLevels) > 0
+        for i = 0 to array.size(srLevels) - 1
+            lvl = array.get(srLevels, i)
+            if math.abs(lvl.price - price) <= price * tolerancePct
+                found := true
+    found
+
+addSRLevel(float price, string role) =>
+    if not isDuplicateLevel(price)
+        if array.size(srLevels) >= maxLevels
+            oldest = array.shift(srLevels)
+            line.delete(oldest.ln)
+        lineColor = role == "support" ? color.green : color.red
+        ln = line.new(bar_index, price, bar_index + 1, price, extend=extend.right, color=lineColor, width=1, style=line.style_dashed)
+        array.push(srLevels, SRLevel.new(price=price, role=role, ln=ln))
+
+if not na(pivotHighVal)
+    addSRLevel(pivotHighVal, "resistance")
+
+if not na(pivotLowVal)
+    addSRLevel(pivotLowVal, "support")
+
+if array.size(srLevels) > 0
+    for i = 0 to array.size(srLevels) - 1
+        lvl = array.get(srLevels, i)
+        if lvl.role == "support" and close < lvl.price * (1 - tolerancePct)
+            lvl.role := "resistance"
+            line.set_color(lvl.ln, color.red)
+            if showFlipLabels
+                label.new(bar_index, lvl.price, text="S->R", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.tiny)
+        else if lvl.role == "resistance" and close > lvl.price * (1 + tolerancePct)
+            lvl.role := "support"
+            line.set_color(lvl.ln, color.green)
+            if showFlipLabels
+                label.new(bar_index, lvl.price, text="R->S", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.tiny)

@@ -1,38 +1,47 @@
 //@version=6
-indicator("Reversal Confluence SMA Crossover", overlay=true, max_labels_count=500)
+indicator("Reversal Confluence SMA Crossover", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
-fastLen        = input.int(10, "Fast SMA Length", minval=1)
-slowLen        = input.int(30, "Slow SMA Length", minval=1)
-swingBars      = input.int(3, "Swing Lookback/Lookahead Bars", minval=1)
-tolerancePctIn = input.float(0.15, "Confluence Tolerance %", minval=0.0, step=0.01)
-minConfluence  = input.int(1, "Minimum Confluence Score to Plot", minval=0, maxval=4)
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+fastLen        = input.int(10, "Fast SMA Length", minval=1, group="Crossover")
+slowLen        = input.int(30, "Slow SMA Length", minval=1, group="Crossover")
+swingBars      = input.int(3, "Swing Lookback/Lookahead Bars", minval=1, group="Crossover")
+minConfluence  = input.int(1, "Minimum Confluence Score to Plot", minval=0, maxval=1, group="Crossover")
 
-tolerancePct = tolerancePctIn / 100
-orbStartStr  = "0830-0900"
-orbTimezone  = "America/Chicago"
+showTPSL       = input.bool(true, "Show auto take-profit / stop-loss", group="Take Profit / Stop Loss")
+atrLen         = input.int(14, "ATR Length", minval=1, group="Take Profit / Stop Loss")
+slAtrMult      = input.float(1.5, "Stop Loss ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
+tpAtrMult      = input.float(3.0, "Take Profit ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
 
+show1H         = input.bool(true, "Show 1H 50/200 SMA", group="Multi-Timeframe SMA")
+show4H         = input.bool(true, "Show 4H 50/200 SMA", group="Multi-Timeframe SMA")
+showDaily      = input.bool(true, "Show Daily 50/200 SMA", group="Multi-Timeframe SMA")
+
+// ---------------------------------------------------------------------------
+// Fast/slow SMA crossover
+// ---------------------------------------------------------------------------
 fastSMA = ta.sma(close, fastLen)
 slowSMA = ta.sma(close, slowLen)
 
 bullCross = ta.crossover(fastSMA, slowSMA)
 bearCross = ta.crossunder(fastSMA, slowSMA)
 
+// ---------------------------------------------------------------------------
+// Swing points and structure breaks
+// ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 
-var float fibLastHigh   = na
-var float fibLastLow    = na
 var float breakLastHigh = na
 var float breakLastLow  = na
 var bool  hadBullishBreak = false
 var bool  hadBearishBreak = false
 
 if not na(pivotHighVal)
-    fibLastHigh   := pivotHighVal
     breakLastHigh := pivotHighVal
 
 if not na(pivotLowVal)
-    fibLastLow   := pivotLowVal
     breakLastLow := pivotLowVal
 
 // Structure break: price closes beyond the most recent prior swing high/low.
@@ -49,56 +58,11 @@ if bearishBreakNow
     breakLastLow := close
     hadBearishBreak := true
 
-// 0.5-0.618 fib pullback zone from the most recent swing low/high pair.
-fibZoneLow = float(na)
-fibZoneHigh = float(na)
-if not na(fibLastHigh) and not na(fibLastLow)
-    move  = fibLastHigh - fibLastLow
-    lvl50  = fibLastHigh - 0.5 * move
-    lvl618 = fibLastHigh - 0.618 * move
-    fibZoneLow  := math.min(lvl50, lvl618)
-    fibZoneHigh := math.max(lvl50, lvl618)
-
-inFibZone = not na(fibZoneLow) and close >= fibZoneLow - close * tolerancePct and close <= fibZoneHigh + close * tolerancePct
-
-// 8:30-9:00am America/Chicago opening range.
-orbSession   = time(timeframe.period, orbStartStr, orbTimezone)
-inSession    = not na(orbSession)
-sessionStart = inSession and na(orbSession[1])
-
-var float orbHigh = na
-var float orbLow  = na
-var box   orbBox  = na
-
-if sessionStart
-    orbHigh := high
-    orbLow  := low
-    orbBox  := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=color.purple, border_width=1, bgcolor=color.new(color.purple, 90))
-else if inSession
-    orbHigh := math.max(orbHigh, high)
-    orbLow  := math.min(orbLow, low)
-    box.set_top(orbBox, orbHigh)
-    box.set_bottom(orbBox, orbLow)
-    box.set_right(orbBox, bar_index)
-else if not na(orbBox)
-    // Keep the rectangle extending across the rest of the session for
-    // visual reference, without growing its top/bottom further.
-    box.set_right(orbBox, bar_index)
-
-orbAbove = not na(orbHigh) and close >= orbHigh
-orbBelow = not na(orbLow) and close <= orbLow
-
-// Proximity to most recent swing structure level.
-nearHighLevel = not na(fibLastHigh) and math.abs(close - fibLastHigh) <= close * tolerancePct
-nearLowLevel  = not na(fibLastLow) and math.abs(close - fibLastLow) <= close * tolerancePct
-nearStructureLevel = nearHighLevel or nearLowLevel
-
-fibScore       = inFibZone ? 1 : 0
-orbScore       = (orbAbove or orbBelow) ? 1 : 0
-structureScore = nearStructureLevel ? 1 : 0
-
-buyScore  = fibScore + orbScore + structureScore + (bullCross and hadBullishBreak ? 1 : 0)
-sellScore = fibScore + orbScore + structureScore + (bearCross and hadBearishBreak ? 1 : 0)
+// ---------------------------------------------------------------------------
+// Confluence scoring
+// ---------------------------------------------------------------------------
+buyScore  = bullCross and hadBullishBreak ? 1 : 0
+sellScore = bearCross and hadBearishBreak ? 1 : 0
 
 plotBuy  = bullCross and buyScore >= minConfluence
 plotSell = bearCross and sellScore >= minConfluence
@@ -111,6 +75,54 @@ if plotBuy
 
 if plotSell
     label.new(bar_index, high, text="SELL  score " + str.tostring(sellScore), style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
+// Automatic take-profit / stop-loss levels for the most recent signal.
+// Replaces the previous signal's lines so only the active trade is shown.
+// ---------------------------------------------------------------------------
+atrVal = ta.atr(atrLen)
+
+var line  tpLine  = na
+var line  slLine  = na
+var label tpLabel = na
+var label slLabel = na
+
+// Pine doesn't allow user-defined functions to reassign global `var`
+// variables, so the TP/SL drawing logic is inlined at each call site
+// instead of factored into a shared function.
+if showTPSL and (plotBuy or plotSell)
+    if not na(tpLine)
+        line.delete(tpLine)
+        label.delete(tpLabel)
+    if not na(slLine)
+        line.delete(slLine)
+        label.delete(slLabel)
+
+    tp = plotBuy ? close + atrVal * tpAtrMult : close - atrVal * tpAtrMult
+    sl = plotBuy ? close - atrVal * slAtrMult : close + atrVal * slAtrMult
+
+    tpLine  := line.new(bar_index, tp, bar_index + 1, tp, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
+    slLine  := line.new(bar_index, sl, bar_index + 1, sl, extend=extend.right, color=color.red, width=1, style=line.style_dashed)
+    tpLabel := label.new(bar_index, tp, text="TP " + str.tostring(tp, format.mintick), style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+    slLabel := label.new(bar_index, sl, text="SL " + str.tostring(sl, format.mintick), style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
+// Multi-timeframe SMA levels (1H, 4H, Daily 50/200), intended for use on a
+// 5-minute chart but computed independently of the chart's own timeframe.
+// ---------------------------------------------------------------------------
+sma50_1h  = request.security(syminfo.tickerid, "60", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_1h = request.security(syminfo.tickerid, "60", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+sma50_4h  = request.security(syminfo.tickerid, "240", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_4h = request.security(syminfo.tickerid, "240", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+sma50_d   = request.security(syminfo.tickerid, "D", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_d  = request.security(syminfo.tickerid, "D", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+
+plot(show1H ? sma50_1h : na, "1H SMA 50", color=color.new(color.blue, 0), linewidth=1)
+plot(show1H ? sma200_1h : na, "1H SMA 200", color=color.new(color.blue, 55), linewidth=1)
+plot(show4H ? sma50_4h : na, "4H SMA 50", color=color.new(color.orange, 0), linewidth=1)
+plot(show4H ? sma200_4h : na, "4H SMA 200", color=color.new(color.orange, 55), linewidth=1)
+plot(showDaily ? sma50_d : na, "Daily SMA 50", color=color.new(color.white, 0), linewidth=1)
+plot(showDaily ? sma200_d : na, "Daily SMA 200", color=color.new(color.white, 55), linewidth=1)
 
 plot(fastSMA, "Fast SMA", color=color.blue)
 plot(slowSMA, "Slow SMA", color=color.orange)

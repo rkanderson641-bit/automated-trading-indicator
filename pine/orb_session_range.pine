@@ -1,0 +1,45 @@
+//@version=6
+indicator("8:30-9:00 CDT Opening Range (ORB)", overlay=true, max_boxes_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+sessionStr   = input.session("0830-0900", "Opening Range Session")
+sessionTz    = input.string("America/Chicago", "Session Timezone")
+boxColor     = input.color(color.purple, "Box Color")
+extendBoxes  = input.bool(true, "Extend box through rest of session")
+
+// ---------------------------------------------------------------------------
+// Track the high/low of the session window each day, drawn as a translucent
+// box so candles remain visible through it. Independent of any other
+// indicator so it can be added/removed on its own to declutter the chart.
+// ---------------------------------------------------------------------------
+orbSession   = time(timeframe.period, sessionStr, sessionTz)
+inSession    = not na(orbSession)
+sessionStart = inSession and na(orbSession[1])
+
+var float orbHigh = na
+var float orbLow  = na
+var box   orbBox  = na
+
+if sessionStart
+    orbHigh := high
+    orbLow  := low
+    orbBox  := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=boxColor, border_width=1, bgcolor=color.new(boxColor, 90))
+else if inSession
+    orbHigh := math.max(orbHigh, high)
+    orbLow  := math.min(orbLow, low)
+    box.set_top(orbBox, orbHigh)
+    box.set_bottom(orbBox, orbLow)
+    box.set_right(orbBox, bar_index)
+else if extendBoxes and not na(orbBox)
+    // Keep the rectangle extending across the rest of the session for
+    // visual reference, without growing its top/bottom further.
+    box.set_right(orbBox, bar_index)
+
+// "Disrespected" = price closes outside the established opening range.
+brokeAbove = not na(orbHigh) and close > orbHigh
+brokeBelow = not na(orbLow) and close < orbLow
+
+alertcondition(brokeAbove, title="ORB Disrespected Above", message="Price closed above the opening range high")
+alertcondition(brokeBelow, title="ORB Disrespected Below", message="Price closed below the opening range low")

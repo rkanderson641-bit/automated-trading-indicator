@@ -1,0 +1,129 @@
+//@version=6
+indicator("Micro Fib Pullback Levels (Structure Break)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+structureBars   = input.int(8, "Significant swing lookback/lookahead bars", minval=1)
+atrLen          = input.int(14, "ATR length", minval=1, group="Minimum Move Filter")
+minMoveAtrMult  = input.float(1.5, "Minimum impulsive move (x ATR)", minval=0.1, step=0.1, group="Minimum Move Filter")
+showDebug       = input.bool(true, "Show debug markers (structure break / fib shown / invalidated)", group="Debug")
+
+atrVal = ta.atr(atrLen)
+
+// ---------------------------------------------------------------------------
+// Tracks the most recent SIGNIFICANT swing high/low (sigHigh/sigLow), used
+// to detect a structure break that starts a new leg.
+//
+// The leg's origin (legOrigin) is FROZEN once a leg starts — not re-checked
+// live every bar — so normal noise within an ongoing trend doesn't trip
+// "invalidated." It only refreshes to a newer, more recent significant
+// pivot when a fresh one confirms AND that still leaves a big-enough
+// qualifying move (so a long-running trend doesn't stay anchored to a
+// distant/old origin forever, but also doesn't get re-anchored on every
+// minor wiggle).
+//
+// The extreme (trendExtreme) is the TRUE running high (bullish) or low
+// (bearish), updated every bar — not locked behind pivot confirmation lag
+// — so the fib always reflects the actual highest/lowest point reached.
+// ---------------------------------------------------------------------------
+pivotHighVal = ta.pivothigh(high, structureBars, structureBars)
+pivotLowVal  = ta.pivotlow(low, structureBars, structureBars)
+
+var float sigHigh = na
+var float sigLow  = na
+
+if not na(pivotHighVal)
+    sigHigh := pivotHighVal
+
+if not na(pivotLowVal)
+    sigLow := pivotLowVal
+
+var bool  trackingTrend = false
+var bool  trendIsBull   = false
+var float trendExtreme  = na
+var float legOrigin     = na
+var bool  fibShown      = false
+
+var line  fibLn50   = na
+var line  fibLn618  = na
+var label fibLbl50  = na
+var label fibLbl618 = na
+
+// ---------------------------------------------------------------------------
+// Structure break: starts tracking a brand new leg. Only looked for while
+// no leg is already being tracked.
+// ---------------------------------------------------------------------------
+if not trackingTrend and not na(sigHigh) and not na(sigLow)
+    if close > sigHigh
+        trackingTrend := true
+        trendIsBull   := true
+        trendExtreme  := high
+        legOrigin     := sigLow
+        fibShown      := false
+        sigHigh       := close // avoid an immediate retrigger on the same breakout
+        if showDebug
+            label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    else if close < sigLow
+        trackingTrend := true
+        trendIsBull   := false
+        trendExtreme  := low
+        legOrigin     := sigHigh
+        fibShown      := false
+        sigLow        := close
+        if showDebug
+            label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// While a leg is tracked: refresh the origin only on a fresh qualifying
+// pivot, keep the extreme continuously updated to the true running
+// high/low, and draw/redraw the fib every bar once the move qualifies.
+// Invalidated (price closing back through the frozen origin) clears
+// everything and goes back to looking for the next break.
+// ---------------------------------------------------------------------------
+if trackingTrend
+    trendExtreme := trendIsBull ? math.max(trendExtreme, high) : math.min(trendExtreme, low)
+
+    if trendIsBull and not na(pivotLowVal) and pivotLowVal > legOrigin and (trendExtreme - pivotLowVal) >= atrVal * minMoveAtrMult
+        legOrigin := pivotLowVal
+    else if not trendIsBull and not na(pivotHighVal) and pivotHighVal < legOrigin and (pivotHighVal - trendExtreme) >= atrVal * minMoveAtrMult
+        legOrigin := pivotHighVal
+
+    invalidated = trendIsBull ? close < legOrigin : close > legOrigin
+
+    if invalidated
+        if not na(fibLn50)
+            line.delete(fibLn50)
+            line.delete(fibLn618)
+            label.delete(fibLbl50)
+            label.delete(fibLbl618)
+        fibLn50       := na
+        fibLn618      := na
+        fibLbl50      := na
+        fibLbl618     := na
+        trackingTrend := false
+        fibShown      := false
+        if showDebug
+            label.new(bar_index, close, text="INVALID", style=label.style_label_down, color=color.new(color.gray, 50), textcolor=color.white, size=size.tiny)
+    else
+        moveSize = math.abs(trendExtreme - legOrigin)
+        if moveSize >= atrVal * minMoveAtrMult
+            if not fibShown and showDebug
+                label.new(bar_index, trendIsBull ? low : high, text="FIB", style=trendIsBull ? label.style_label_up : label.style_label_down, color=color.new(color.fuchsia, 50), textcolor=color.white, size=size.tiny)
+            fibShown := true
+
+            if not na(fibLn50)
+                line.delete(fibLn50)
+                line.delete(fibLn618)
+                label.delete(fibLbl50)
+                label.delete(fibLbl618)
+
+            move  = trendExtreme - legOrigin
+            lvl50  = trendExtreme - 0.5 * move
+            lvl618 = trendExtreme - 0.618 * move
+            legColor = trendIsBull ? color.green : color.red
+
+            fibLn50   := line.new(bar_index, lvl50, bar_index + 1, lvl50, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+            fibLn618  := line.new(bar_index, lvl618, bar_index + 1, lvl618, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+            fibLbl50  := label.new(bar_index, lvl50, text="50.00% (" + str.tostring(lvl50, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+            fibLbl618 := label.new(bar_index, lvl618, text="61.80% (" + str.tostring(lvl618, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
