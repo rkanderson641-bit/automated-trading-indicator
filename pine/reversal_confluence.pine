@@ -1,0 +1,112 @@
+//@version=6
+indicator("Reversal Confluence SMA Crossover", overlay=true, max_labels_count=500)
+
+fastLen        = input.int(10, "Fast SMA Length", minval=1)
+slowLen        = input.int(30, "Slow SMA Length", minval=1)
+swingBars      = input.int(3, "Swing Lookback/Lookahead Bars", minval=1)
+tolerancePctIn = input.float(0.15, "Confluence Tolerance %", minval=0.0, step=0.01)
+minConfluence  = input.int(1, "Minimum Confluence Score to Plot", minval=0, maxval=4)
+
+tolerancePct = tolerancePctIn / 100
+orbStartStr  = "0830-0900"
+orbTimezone  = "America/Chicago"
+
+fastSMA = ta.sma(close, fastLen)
+slowSMA = ta.sma(close, slowLen)
+
+bullCross = ta.crossover(fastSMA, slowSMA)
+bearCross = ta.crossunder(fastSMA, slowSMA)
+
+pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
+pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
+
+var float fibLastHigh   = na
+var float fibLastLow    = na
+var float breakLastHigh = na
+var float breakLastLow  = na
+var bool  hadBullishBreak = false
+var bool  hadBearishBreak = false
+
+if not na(pivotHighVal)
+    fibLastHigh   := pivotHighVal
+    breakLastHigh := pivotHighVal
+
+if not na(pivotLowVal)
+    fibLastLow   := pivotLowVal
+    breakLastLow := pivotLowVal
+
+// Structure break: price closes beyond the most recent prior swing high/low.
+// Once a break of a given direction has occurred, that direction stays
+// "armed" for future confluence scoring (mirrors the original Python logic).
+bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh
+bearishBreakNow = not na(breakLastLow) and close < breakLastLow
+
+if bullishBreakNow
+    breakLastHigh := close
+    hadBullishBreak := true
+
+if bearishBreakNow
+    breakLastLow := close
+    hadBearishBreak := true
+
+// 0.5-0.618 fib pullback zone from the most recent swing low/high pair.
+fibZoneLow = float(na)
+fibZoneHigh = float(na)
+if not na(fibLastHigh) and not na(fibLastLow)
+    move  = fibLastHigh - fibLastLow
+    lvl50  = fibLastHigh - 0.5 * move
+    lvl618 = fibLastHigh - 0.618 * move
+    fibZoneLow  := math.min(lvl50, lvl618)
+    fibZoneHigh := math.max(lvl50, lvl618)
+
+inFibZone = not na(fibZoneLow) and close >= fibZoneLow - close * tolerancePct and close <= fibZoneHigh + close * tolerancePct
+
+// 8:30-9:00am America/Chicago opening range.
+orbSession   = time(timeframe.period, orbStartStr, orbTimezone)
+inSession    = not na(orbSession)
+sessionStart = inSession and na(orbSession[1])
+
+var float orbHigh = na
+var float orbLow  = na
+
+if sessionStart
+    orbHigh := high
+    orbLow  := low
+else if inSession
+    orbHigh := math.max(orbHigh, high)
+    orbLow  := math.min(orbLow, low)
+
+orbAbove = not na(orbHigh) and close >= orbHigh
+orbBelow = not na(orbLow) and close <= orbLow
+
+// Proximity to most recent swing structure level.
+nearHighLevel = not na(fibLastHigh) and math.abs(close - fibLastHigh) <= close * tolerancePct
+nearLowLevel  = not na(fibLastLow) and math.abs(close - fibLastLow) <= close * tolerancePct
+nearStructureLevel = nearHighLevel or nearLowLevel
+
+fibScore       = inFibZone ? 1 : 0
+orbScore       = (orbAbove or orbBelow) ? 1 : 0
+structureScore = nearStructureLevel ? 1 : 0
+
+buyScore  = fibScore + orbScore + structureScore + (bullCross and hadBullishBreak ? 1 : 0)
+sellScore = fibScore + orbScore + structureScore + (bearCross and hadBearishBreak ? 1 : 0)
+
+plotBuy  = bullCross and buyScore >= minConfluence
+plotSell = bearCross and sellScore >= minConfluence
+
+plotshape(plotBuy, title="BUY", location=location.belowbar, style=shape.triangleup, color=color.new(color.green, 0), size=size.small)
+plotshape(plotSell, title="SELL", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small)
+
+if plotBuy
+    label.new(bar_index, low, text="BUY  score " + str.tostring(buyScore), style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+
+if plotSell
+    label.new(bar_index, high, text="SELL  score " + str.tostring(sellScore), style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+plot(fastSMA, "Fast SMA", color=color.blue)
+plot(slowSMA, "Slow SMA", color=color.orange)
+plot(orbHigh, "ORB High (8:30-9:00 CDT)", color=color.new(color.purple, 40), style=plot.style_circles)
+plot(orbLow, "ORB Low (8:30-9:00 CDT)", color=color.new(color.purple, 40), style=plot.style_circles)
+
+alertcondition(plotBuy, title="High Confluence BUY", message="BUY signal with confluence score above the configured minimum")
+alertcondition(plotSell, title="High Confluence SELL", message="SELL signal with confluence score above the configured minimum")
