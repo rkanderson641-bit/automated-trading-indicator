@@ -73,14 +73,18 @@ default to CDT (America/Chicago):
 - **8:30-9:00 main ORB**: drawn as a translucent box so candles remain
   visible through it. Exposes `alertcondition()`s for closes above/below
   the range ("disrespected").
-- **7:30-7:45 overnight ORB**: drawn as a gradient of stacked translucent
-  white bands fading from more opaque near the range high to more
-  transparent near the range low, instead of one flat-colored box.
-- **8:30-8:45 NY AM 15-minute ORB**: drawn as opaque high/low lines
-  instead of a box.
+- **7:30-7:45 overnight ORB**: drawn the same way as the main ORB box
+  (single translucent box), just white by default instead of purple.
+- **8:30-8:45 NY AM 15-minute ORB**: drawn as opaque high/low lines that
+  extend the same length as the main ORB box (stopping at the current
+  bar, not stretching into the empty future), instead of a box.
 
 All three automatically apply each trading day, extending through the
 rest of the session once their window closes (configurable per range).
+Note: these intraday windows (15-30 minutes) need a chart timeframe at or
+below the window size to register a bar inside them — e.g. a 1-hour chart
+will never show any of these, since no 1H bar's start time falls within a
+15-30 minute window. Use 5m or 15m.
 
 ### [pine/auto_support_resistance.pine](pine/auto_support_resistance.pine)
 
