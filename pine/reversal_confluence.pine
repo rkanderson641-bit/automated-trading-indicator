@@ -68,13 +68,22 @@ sessionStart = inSession and na(orbSession[1])
 
 var float orbHigh = na
 var float orbLow  = na
+var box   orbBox  = na
 
 if sessionStart
     orbHigh := high
     orbLow  := low
+    orbBox  := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=color.purple, border_width=1, bgcolor=color.new(color.purple, 90))
 else if inSession
     orbHigh := math.max(orbHigh, high)
     orbLow  := math.min(orbLow, low)
+    box.set_top(orbBox, orbHigh)
+    box.set_bottom(orbBox, orbLow)
+    box.set_right(orbBox, bar_index)
+else if not na(orbBox)
+    // Keep the rectangle extending across the rest of the session for
+    // visual reference, without growing its top/bottom further.
+    box.set_right(orbBox, bar_index)
 
 orbAbove = not na(orbHigh) and close >= orbHigh
 orbBelow = not na(orbLow) and close <= orbLow
@@ -105,8 +114,6 @@ if plotSell
 
 plot(fastSMA, "Fast SMA", color=color.blue)
 plot(slowSMA, "Slow SMA", color=color.orange)
-plot(orbHigh, "ORB High (8:30-9:00 CDT)", color=color.new(color.purple, 40), style=plot.style_circles)
-plot(orbLow, "ORB Low (8:30-9:00 CDT)", color=color.new(color.purple, 40), style=plot.style_circles)
 
 alertcondition(plotBuy, title="High Confluence BUY", message="BUY signal with confluence score above the configured minimum")
 alertcondition(plotSell, title="High Confluence SELL", message="SELL signal with confluence score above the configured minimum")
