@@ -4,24 +4,26 @@ indicator("Micro Fib Pullback Levels (ZigZag)", overlay=true, max_lines_count=50
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-atrLen         = input.int(14, "ATR length", minval=1, group="Swing Threshold")
-thresholdMult  = input.float(1.5, "Minimum reversal to confirm a swing (x ATR)", minval=0.1, step=0.1, group="Swing Threshold")
-showDebug      = input.bool(true, "Show debug markers at confirmed swing points", group="Debug")
+atrLen        = input.int(20, "ATR length", minval=1, group="Swing Threshold")
+thresholdMult = input.float(4.0, "Minimum reversal to confirm a swing (x ATR)", minval=0.1, step=0.1, group="Swing Threshold")
+maxFibsPerDay = input.int(20, "Max fib legs kept per session", minval=1, maxval=100, group="Session")
+showDebug     = input.bool(true, "Show debug markers at confirmed swing points", group="Debug")
 
 atrVal    = ta.atr(atrLen)
 threshold = atrVal * thresholdMult
 
 // ---------------------------------------------------------------------------
 // Standard ZigZag swing detector. A new pivot only confirms once price
-// reverses from the current candidate extreme by at least `threshold`.
-// This is the same technique most "auto Fibonacci" tools use: it avoids
-// the whipsaw/invalidation problems of structure-break heuristics because
-// a confirmed pivot can never be "un-confirmed" — it's a fact about price
-// that already happened, not a live-updating guess.
+// reverses from the current candidate extreme by at least `threshold`. The
+// default threshold (4x ATR(20)) is intentionally large — a small
+// multiple was confirming on nearly every minor wiggle in choppy/ranging
+// conditions. Raise thresholdMult further if pivots are still too
+// frequent, or lower it if real swings are being missed.
 //
-// The fib is always drawn between the last two confirmed swing points
-// (the most recently completed leg), redrawn only when a new pivot
-// confirms — not every bar — so it stays stable between confirmations.
+// Each confirmed leg's fib is kept on the chart (not deleted/replaced)
+// for the rest of the trading session, so every fib drawn during the day
+// stays visible until that session closes, at which point all of that
+// day's fibs are cleared and accumulation starts fresh for the new day.
 // ---------------------------------------------------------------------------
 var string dir          = "up" // "up" = searching for a new HIGH pivot, "down" = searching for a new LOW pivot
 var float  pivotVal      = na
@@ -31,12 +33,26 @@ var int    prevPivotBar  = na
 var float  candidate     = na
 var int    candidateBar  = na
 
-var line  fibLn50   = na
-var line  fibLn618  = na
-var label fibLbl50  = na
-var label fibLbl618 = na
+type FibLeg
+    line  ln50
+    line  ln618
+    label lbl50
+    label lbl618
+
+var array<FibLeg> fibLegs = array.new<FibLeg>()
 
 justConfirmed = false
+
+// Clear all of the previous session's fib legs at the start of a new day.
+newDay = ta.change(time("D")) != 0
+if newDay and array.size(fibLegs) > 0
+    for i = 0 to array.size(fibLegs) - 1
+        leg = array.get(fibLegs, i)
+        line.delete(leg.ln50)
+        line.delete(leg.ln618)
+        label.delete(leg.lbl50)
+        label.delete(leg.lbl618)
+    array.clear(fibLegs)
 
 if na(pivotVal)
     pivotVal     := close
@@ -77,16 +93,16 @@ else
             label.new(pivotBar, pivotVal, text="PIVOT", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
 
 // ---------------------------------------------------------------------------
-// Draw the fib for the most recently completed leg (prevPivotVal -> pivotVal)
-// whenever a new pivot has just confirmed.
+// On a new confirmed leg, add its fib to the session's accumulated set
+// instead of deleting the previous one.
 // ---------------------------------------------------------------------------
-// Only redraw on the exact bar a new pivot just confirmed.
 if not na(prevPivotVal) and justConfirmed
-    if not na(fibLn50)
-        line.delete(fibLn50)
-        line.delete(fibLn618)
-        label.delete(fibLbl50)
-        label.delete(fibLbl618)
+    if array.size(fibLegs) >= maxFibsPerDay
+        oldest = array.shift(fibLegs)
+        line.delete(oldest.ln50)
+        line.delete(oldest.ln618)
+        label.delete(oldest.lbl50)
+        label.delete(oldest.lbl618)
 
     legColor = pivotVal > prevPivotVal ? color.green : color.red
 
@@ -94,7 +110,9 @@ if not na(prevPivotVal) and justConfirmed
     lvl50  = pivotVal - 0.5 * move
     lvl618 = pivotVal - 0.618 * move
 
-    fibLn50   := line.new(bar_index, lvl50, bar_index + 1, lvl50, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
-    fibLn618  := line.new(bar_index, lvl618, bar_index + 1, lvl618, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
-    fibLbl50  := label.new(bar_index, lvl50, text="50.00% (" + str.tostring(lvl50, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
-    fibLbl618 := label.new(bar_index, lvl618, text="61.80% (" + str.tostring(lvl618, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+    ln50   = line.new(bar_index, lvl50, bar_index + 1, lvl50, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+    ln618  = line.new(bar_index, lvl618, bar_index + 1, lvl618, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+    lbl50  = label.new(bar_index, lvl50, text="50.00% (" + str.tostring(lvl50, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+    lbl618 = label.new(bar_index, lvl618, text="61.80% (" + str.tostring(lvl618, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+
+    array.push(fibLegs, FibLeg.new(ln50=ln50, ln618=ln618, lbl50=lbl50, lbl618=lbl618))
