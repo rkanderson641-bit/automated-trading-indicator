@@ -198,12 +198,12 @@ already-overextended trend:
   (set by older, shallower structure) gets left behind — extrapolating it
   out would show a value price has already blown through by more than
   `Re-anchor line if price diverges beyond` (default 2x ATR). Rather than
-  let the line trail further and further behind, it's dropped and a fresh
-  one is anchored to its last touch point and the current bar, so the
-  line keeps representing the move it's actually measuring. Unlike a
-  genuine opposite structure break, this isn't "completed history" — the
-  superseded segments are deleted rather than kept, since they're being
-  replaced within the SAME ongoing trend, not ending it.
+  let the line trail further and further behind, a fresh line is anchored
+  to its last touch point and the current bar, so a line is always
+  actively tracking the move as it actually develops. The pre-divergence
+  line is NOT deleted — it stays on the chart exactly as drawn (the same
+  as a completed leg ended by a genuine opposite break) until price
+  eventually comes back to retest its last touch point level.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in

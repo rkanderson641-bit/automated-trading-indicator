@@ -263,11 +263,13 @@ bearChainLen = math.min(array.size(bearChainBars), array.size(bearChainPrices))
 // (set by older, shallower structure) gets left behind -- extrapolating
 // it out shows a value price has already blown through by more than
 // divergeAtrMult x ATR. Rather than let the line trail further and
-// further behind, drop it and start a fresh one anchored to its last
-// touch point and the current bar, so the line keeps representing the
-// move it's actually measuring. Unlike a genuine opposite structure
-// break, this isn't "completed history" -- the old segments are deleted,
-// not kept, since they're being superseded within the SAME ongoing trend.
+// further behind, a fresh one is anchored to its last touch point and
+// the current bar, so the line keeps representing the move it's actually
+// measuring. The pre-divergence line is NOT deleted -- it's left drawn
+// exactly as it was (same as a genuine opposite-break completion) until
+// price eventually comes back to retest its last touch point level; only
+// the bookkeeping (chain arrays, placeholder flag, draw-progress counter)
+// resets so the NEW chain starts fresh from that point forward.
 if trackingBull and bullChainLen >= 2
     bullLastBarChk   = array.get(bullChainBars, bullChainLen - 1)
     bullLastPriceChk = array.get(bullChainPrices, bullChainLen - 1)
@@ -276,13 +278,7 @@ if trackingBull and bullChainLen >= 2
     bullSlopeChk = (bullLastPriceChk - bullPrevPriceChk) / (bullLastBarChk - bullPrevBarChk)
     bullPredicted = bullLastPriceChk + bullSlopeChk * (bar_index - bullLastBarChk)
     if close > bullPredicted + atrVal * divergeAtrMult
-        if array.size(bullSegments) > 0
-            for i = 0 to array.size(bullSegments) - 1
-                line.delete(array.get(bullSegments, i))
-            array.clear(bullSegments)
-        if not na(bullCapLine)
-            line.delete(bullCapLine)
-            bullCapLine := na
+        bullCapLine := na
         array.clear(bullChainBars)
         array.clear(bullChainPrices)
         array.push(bullChainBars, bullLastBarChk)
@@ -301,13 +297,7 @@ if trackingBear and bearChainLen >= 2
     bearSlopeChk = (bearLastPriceChk - bearPrevPriceChk) / (bearLastBarChk - bearPrevBarChk)
     bearPredicted = bearLastPriceChk + bearSlopeChk * (bar_index - bearLastBarChk)
     if close < bearPredicted - atrVal * divergeAtrMult
-        if array.size(bearSegments) > 0
-            for i = 0 to array.size(bearSegments) - 1
-                line.delete(array.get(bearSegments, i))
-            array.clear(bearSegments)
-        if not na(bearCapLine)
-            line.delete(bearCapLine)
-            bearCapLine := na
+        bearCapLine := na
         array.clear(bearChainBars)
         array.clear(bearChainPrices)
         array.push(bearChainBars, bearLastBarChk)
