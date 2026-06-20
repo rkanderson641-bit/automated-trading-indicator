@@ -201,7 +201,13 @@ if bearTrigger
 // actively being tracked and either just started or just grew a new
 // point: delete all previous segments, then draw one line.new between
 // each consecutive pair of chain points.
-if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
+bullDrawCond = trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
+bearDrawCond = trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
+
+if showDebug and (bullTrigger or bearTrigger or bullChainChanged or bearChainChanged)
+    label.new(bar_index, close, text="bullChain=" + str.tostring(array.size(bullChainBars)) + " bearChain=" + str.tostring(array.size(bearChainBars)) + " trkBull=" + str.tostring(trackingBull) + " trkBear=" + str.tostring(trackingBear) + " bullDraw=" + str.tostring(bullDrawCond) + " bearDraw=" + str.tostring(bearDrawCond), style=label.style_label_left, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny)
+
+if bullDrawCond
     if array.size(bullSegments) > 0
         for i = 0 to array.size(bullSegments) - 1
             line.delete(array.get(bullSegments, i))
@@ -209,8 +215,10 @@ if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBa
     for i = 0 to array.size(bullChainBars) - 2
         seg = line.new(array.get(bullChainBars, i), array.get(bullChainPrices, i), array.get(bullChainBars, i + 1), array.get(bullChainPrices, i + 1), extend=extend.none, color=bullColor, width=2)
         array.push(bullSegments, seg)
+    if showDebug
+        label.new(bar_index, low, text="DREW " + str.tostring(array.size(bullSegments)) + " BULL SEG", style=label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.normal)
 
-if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
+if bearDrawCond
     if array.size(bearSegments) > 0
         for i = 0 to array.size(bearSegments) - 1
             line.delete(array.get(bearSegments, i))
@@ -218,6 +226,8 @@ if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBa
     for i = 0 to array.size(bearChainBars) - 2
         seg = line.new(array.get(bearChainBars, i), array.get(bearChainPrices, i), array.get(bearChainBars, i + 1), array.get(bearChainPrices, i + 1), extend=extend.none, color=bearColor, width=2)
         array.push(bearSegments, seg)
+    if showDebug
+        label.new(bar_index, high, text="DREW " + str.tostring(array.size(bearSegments)) + " BEAR SEG", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.normal)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
