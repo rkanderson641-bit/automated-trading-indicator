@@ -153,11 +153,15 @@ already-overextended trend:
 - Once RSI's moving average confirms the trend is stretched (above
   overbought during a confirmed uptrend = "overextended," or below
   oversold during a confirmed downtrend = "underextended"), the trend
-  line is drawn from the swing low/high that launched the move through to
-  the current bar/price. The overextended/underextended check uses a
-  level-based "armed" latch rather than a same-bar crossover, so it still
-  fires even when the swing-confirmation lag means the trend structure
-  confirms a few bars after RSI actually crossed the threshold.
+  line is drawn connecting the last two confirmed swing pivots in the
+  trend's direction (two swing lows for an uptrend, two swing highs for a
+  downtrend) — never the current/live close, since RSI overbought/oversold
+  conditions put the close near a local price extreme, which made the
+  line's slope so steep it projected off the visible price range within a
+  few bars. The overextended/underextended check uses a level-based
+  "armed" latch rather than a same-bar crossover, so it still fires even
+  when the swing-confirmation lag means the trend structure confirms a
+  few bars after RSI actually crossed the threshold.
 - From there, the line keeps extending to each new confirming swing point
   as the trend continues, re-pivoting its slope each time. It doesn't
   need to sit exactly on every point in between — just connect two points

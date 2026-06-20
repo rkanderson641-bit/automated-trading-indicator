@@ -23,16 +23,24 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // for a pullback to form a second confirming pivot.
 //
 // Once RSI confirms the trend is overextended/underextended, the trend
-// line is drawn from the swing low (bullish) or swing high (bearish) that
-// launched the move through to the current bar/price, then keeps
-// extending to each NEW confirming swing point as the trend continues --
-// it doesn't need to sit exactly on every point, just connect two points
-// of the move while tracking overall trend structure. The line is only
-// invalidated when a genuine OPPOSITE structure break occurs (the same
-// definition used to confirm trend direction in the first place), not by
-// a tight price check against its most recent point -- RSI peaks/troughs
-// coincide with local price extremes almost by definition, so any tighter
-// check broke the line within a bar or two, before it could ever be seen.
+// line is drawn connecting the last TWO CONFIRMED SWING PIVOTS in the
+// trend's direction (two swing lows for an uptrend, two swing highs for a
+// downtrend) -- never the current/live close. Anchoring the second point
+// to the current bar's close (a value RSI-overbought/oversold conditions
+// guarantee is near a local price extreme) produced a slope so steep that
+// extend.right projected it off the top/bottom of the visible price range
+// within a few bars -- the line was technically still being drawn, just
+// rendered outside the visible candles, which looked identical to no line
+// at all. Using two real, already-confirmed pivots keeps the slope
+// realistic. From there, the line keeps extending to each NEW confirming
+// swing point as the trend continues -- it doesn't need to sit exactly on
+// every point, just connect two points of the move while tracking overall
+// trend structure. The line is only invalidated when a genuine OPPOSITE
+// structure break occurs (the same definition used to confirm trend
+// direction in the first place), not by a tight price check against its
+// most recent point -- RSI peaks/troughs coincide with local price
+// extremes almost by definition, so any tighter check broke the line
+// within a bar or two, before it could ever be seen.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -154,29 +162,33 @@ if bullTrigger
 if bearTrigger
     bearArmed := true
 
-if bullTrigger and not na(swingLowBar1)
+if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
     if not na(bullLine)
         line.delete(bullLine)
     bullStartBar   := swingLowBar1
     bullStartPrice := swingLow1
-    bullLastBar    := bar_index
-    bullLastPrice  := close
+    bullLastBar    := swingLowBar2
+    bullLastPrice  := swingLow2
     bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.right, color=bullColor, width=2)
     trackingBull   := true
     if showLabels
         label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
+    if showDebug
+        label.new(bullStartBar, bullStartPrice, text="ANCHOR", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
 
-if bearTrigger and not na(swingHighBar1)
+if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
     if not na(bearLine)
         line.delete(bearLine)
     bearStartBar   := swingHighBar1
     bearStartPrice := swingHigh1
-    bearLastBar    := bar_index
-    bearLastPrice  := close
+    bearLastBar    := swingHighBar2
+    bearLastPrice  := swingHigh2
     bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.right, color=bearColor, width=2)
     trackingBear   := true
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
+    if showDebug
+        label.new(bearStartBar, bearStartPrice, text="ANCHOR", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
 
 // ---------------------------------------------------------------------------
 // While still tracking, extend the line to each new confirming swing point
