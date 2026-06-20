@@ -15,6 +15,7 @@ bullColor       = input.color(color.green, "Bullish Trend Line Color", group="St
 bearColor       = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels      = input.bool(true, "Show signal/break labels", group="Style")
 extendBars      = input.int(8, "Extend each line past its last point (bars)", minval=0, group="Style")
+anchorLookback  = input.int(50, "Seed anchor lookback (bars)", minval=8, group="Trend Structure")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -48,12 +49,13 @@ pivotBarIdx  = bar_index - swingBars
 // visually obvious on the chart at breakout time. ta.highestbars/
 // ta.lowestbars find the TRUE most recent extreme over a lookback window
 // with no confirmation lag, giving a seed anchor that matches what's
-// actually visible.
-recentAnchorLookback = swingBars * 3
-anchorHighBar = bar_index + ta.highestbars(high, recentAnchorLookback)
-anchorHighVal = ta.highest(high, recentAnchorLookback)
-anchorLowBar  = bar_index + ta.lowestbars(low, recentAnchorLookback)
-anchorLowVal  = ta.lowest(low, recentAnchorLookback)
+// actually visible -- as long as the lookback window is wide enough to
+// actually reach the real swing extreme that preceded the breakout (a
+// too-short window picked a more recent but less extreme point instead).
+anchorHighBar = bar_index + ta.highestbars(high, anchorLookback)
+anchorHighVal = ta.highest(high, anchorLookback)
+anchorLowBar  = bar_index + ta.lowestbars(low, anchorLookback)
+anchorLowVal  = ta.lowest(low, anchorLookback)
 
 // Structure break: price closes beyond the most recent prior swing
 // high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
@@ -100,6 +102,17 @@ var int         bearSegmentsDrawnFor = 0
 var line        bullCapLine          = na
 var line        bearCapLine          = na
 
+// The 2nd seed point (the breakout bar's own close) is only a placeholder
+// to guarantee 2 drawable points immediately -- it's not a real swing
+// point. A genuine pivot that confirms later should REPLACE it rather
+// than just trail after it, and new candidates should be compared
+// against the last REAL point (the seed anchor), not against that
+// placeholder -- otherwise a bounce that's a legitimate lower high/higher
+// low relative to the real anchor, but happens to be on the wrong side of
+// the placeholder close, gets wrongly rejected.
+var bool bullLastIsPlaceholder = false
+var bool bearLastIsPlaceholder = false
+
 var bool trackingBull = false
 var bool trackingBear = false
 
@@ -124,6 +137,7 @@ if bullishBreakNow
             array.push(bullChainPrices, anchorLowVal)
         array.push(bullChainBars, bar_index)
         array.push(bullChainPrices, close)
+        bullLastIsPlaceholder := true
         bullChainChanged := true
     // A fresh bullish break means the downtrend it was tracking no
     // longer holds. The bearish line itself is left in place -- it stays
@@ -150,6 +164,7 @@ if bearishBreakNow
             array.push(bearChainPrices, anchorHighVal)
         array.push(bearChainBars, bar_index)
         array.push(bearChainPrices, close)
+        bearLastIsPlaceholder := true
         bearChainChanged := true
     // A fresh bearish break means the uptrend it was tracking no longer
     // holds. The bullish line itself is left in place -- see the matching
@@ -163,8 +178,28 @@ if bearishBreakNow
 // Collect additional swing points into the active chain as the trend
 // continues, skipping any that don't extend the structure (a lower low
 // during an uptrend's chain, or a higher high during a downtrend's chain).
+// Compare against the last REAL point (skipping the placeholder close, if
+// that's still the last entry) so a legitimate bounce isn't rejected just
+// for landing on the wrong side of that placeholder. A newly-accepted
+// point replaces the placeholder rather than trailing after it, since the
+// placeholder was never a genuine swing point to begin with.
 if hadBullishBreak and not na(pivotLowVal)
-    if array.size(bullChainPrices) == 0 or pivotLowVal > array.get(bullChainPrices, array.size(bullChainPrices) - 1)
+    bullCompareIdx = bullLastIsPlaceholder ? array.size(bullChainPrices) - 2 : array.size(bullChainPrices) - 1
+    bullCompareVal = bullCompareIdx >= 0 ? array.get(bullChainPrices, bullCompareIdx) : na
+    if na(bullCompareVal) or pivotLowVal > bullCompareVal
+        if bullLastIsPlaceholder
+            placeholderIdx = array.size(bullChainBars) - 1
+            array.pop(bullChainBars)
+            array.pop(bullChainPrices)
+            bullLastIsPlaceholder := false
+            // If a segment was already drawn ending at the placeholder
+            // (RSI triggered while it was still the chain's last point),
+            // that drawn line is now stale -- remove it so the redraw
+            // below regenerates it using the real point taking its place.
+            if bullSegmentsDrawnFor >= placeholderIdx and array.size(bullSegments) > 0
+                line.delete(array.get(bullSegments, array.size(bullSegments) - 1))
+                array.pop(bullSegments)
+                bullSegmentsDrawnFor := placeholderIdx - 1
         array.push(bullChainBars, pivotBarIdx)
         array.push(bullChainPrices, pivotLowVal)
         bullChainChanged := true
@@ -172,7 +207,19 @@ if hadBullishBreak and not na(pivotLowVal)
             label.new(pivotBarIdx, pivotLowVal, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
 
 if hadBearishBreak and not na(pivotHighVal)
-    if array.size(bearChainPrices) == 0 or pivotHighVal < array.get(bearChainPrices, array.size(bearChainPrices) - 1)
+    bearCompareIdx = bearLastIsPlaceholder ? array.size(bearChainPrices) - 2 : array.size(bearChainPrices) - 1
+    bearCompareVal = bearCompareIdx >= 0 ? array.get(bearChainPrices, bearCompareIdx) : na
+    if na(bearCompareVal) or pivotHighVal < bearCompareVal
+        if bearLastIsPlaceholder
+            placeholderIdx = array.size(bearChainBars) - 1
+            array.pop(bearChainBars)
+            array.pop(bearChainPrices)
+            bearLastIsPlaceholder := false
+            // See the matching comment in the bullish branch above.
+            if bearSegmentsDrawnFor >= placeholderIdx and array.size(bearSegments) > 0
+                line.delete(array.get(bearSegments, array.size(bearSegments) - 1))
+                array.pop(bearSegments)
+                bearSegmentsDrawnFor := placeholderIdx - 1
         array.push(bearChainBars, pivotBarIdx)
         array.push(bearChainPrices, pivotHighVal)
         bearChainChanged := true

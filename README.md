@@ -174,6 +174,15 @@ already-overextended trend:
   is skipped rather than zig-zagging the line backwards. The chain resets
   only when a genuine new trend actually starts, not on every continuation
   breakout within an already-established trend.
+- The seed anchor's lookback window (`Seed anchor lookback`, default 50
+  bars) needs to be wide enough to actually reach the real swing extreme
+  that preceded the breakout — too short a window picked a more recent
+  but less extreme point instead. The breakout bar's own close is only
+  used as a placeholder second point until a genuine pivot confirms; new
+  candidate pivots are compared against the last REAL point (skipping
+  that placeholder) so a legitimate bounce isn't wrongly rejected for
+  landing on the wrong side of it, and a confirming pivot replaces the
+  placeholder rather than trailing after it.
 - Each line's most recent segment also gets a small overshoot
   (`Extend each line past its last point`, default 8 bars) projected
   along that segment's own slope, so the line doesn't stop dead exactly
