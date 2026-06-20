@@ -178,9 +178,10 @@ if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
     bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.none, color=bullColor, width=2)
     trackingBull   := true
     if showLabels
-        label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
+        label.new(bar_index, low, text="OVEREXTENDED x1=" + str.tostring(bullStartBar) + " x2=" + str.tostring(bullLastBar) + " y1=" + str.tostring(bullStartPrice, format.mintick) + " y2=" + str.tostring(bullLastPrice, format.mintick), style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
     if showDebug
-        label.new(bullStartBar, bullStartPrice, text="ANCHOR", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+        label.new(bullStartBar, bullStartPrice, text="P1", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+        label.new(bullLastBar, bullLastPrice, text="P2", style=label.style_square, color=color.new(bullColor, 30), size=size.tiny)
 
 if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
     if not na(bearLine)
@@ -192,9 +193,10 @@ if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
     bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.none, color=bearColor, width=2)
     trackingBear   := true
     if showLabels
-        label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
+        label.new(bar_index, high, text="UNDEREXTENDED x1=" + str.tostring(bearStartBar) + " x2=" + str.tostring(bearLastBar) + " y1=" + str.tostring(bearStartPrice, format.mintick) + " y2=" + str.tostring(bearLastPrice, format.mintick), style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
     if showDebug
-        label.new(bearStartBar, bearStartPrice, text="ANCHOR", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+        label.new(bearStartBar, bearStartPrice, text="P1", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+        label.new(bearLastBar, bearLastPrice, text="P2", style=label.style_square, color=color.new(bearColor, 30), size=size.tiny)
 
 // ---------------------------------------------------------------------------
 // While still tracking, keep the line's right edge pinned to the current
