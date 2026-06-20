@@ -14,6 +14,7 @@ oversold        = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor       = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor       = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels      = input.bool(true, "Show signal/break labels", group="Style")
+extendBars      = input.int(8, "Extend each line past its last point (bars)", minval=0, group="Style")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -30,27 +31,29 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // was seeded using only the pivot value confirmed on the EXACT breakout
 // bar -- pivots only confirm every swingBars*2 bars, so on most breakout
 // bars there is no fresh pivot, leaving just 1 point (failing a 2-point
-// minimum with no visible symptom other than "no line"). The fix is to
-// track the most recently confirmed swing high/low continuously,
-// independent of trend state, so a real anchor point is always available
-// to pair with the breakout bar when seeding a new chain.
+// minimum with no visible symptom other than "no line"). Seeding from the
+// most recently CONFIRMED pivot fixed that, but confirmed pivots still lag
+// the actual peak/trough by swingBars bars, so the seed anchor sometimes
+// landed on an older, less relevant high/low than the one visually
+// obvious on the chart. The seed now uses the true most recent extreme
+// (ta.highestbars/ta.lowestbars, no confirmation lag) instead.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 pivotBarIdx  = bar_index - swingBars
 
-var float lastSwingHigh    = na
-var int   lastSwingHighBar = na
-var float lastSwingLow     = na
-var int   lastSwingLowBar  = na
-
-if not na(pivotHighVal)
-    lastSwingHigh    := pivotHighVal
-    lastSwingHighBar := pivotBarIdx
-
-if not na(pivotLowVal)
-    lastSwingLow    := pivotLowVal
-    lastSwingLowBar := pivotBarIdx
+// Confirmed pivots lag the actual peak/trough by swingBars bars (they need
+// that many bars of lookahead to confirm), which made the seed anchor for
+// a brand new chain land on an older, less relevant high/low than the one
+// visually obvious on the chart at breakout time. ta.highestbars/
+// ta.lowestbars find the TRUE most recent extreme over a lookback window
+// with no confirmation lag, giving a seed anchor that matches what's
+// actually visible.
+recentAnchorLookback = swingBars * 3
+anchorHighBar = bar_index + ta.highestbars(high, recentAnchorLookback)
+anchorHighVal = ta.highest(high, recentAnchorLookback)
+anchorLowBar  = bar_index + ta.lowestbars(low, recentAnchorLookback)
+anchorLowVal  = ta.lowest(low, recentAnchorLookback)
 
 // Structure break: price closes beyond the most recent prior swing
 // high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
@@ -94,6 +97,8 @@ var array<line> bullSegments        = array.new<line>()
 var array<line> bearSegments        = array.new<line>()
 var int         bullSegmentsDrawnFor = 0
 var int         bearSegmentsDrawnFor = 0
+var line        bullCapLine          = na
+var line        bearCapLine          = na
 
 var bool trackingBull = false
 var bool trackingBear = false
@@ -114,9 +119,9 @@ if bullishBreakNow
         array.clear(bullChainBars)
         array.clear(bullChainPrices)
         bullSegmentsDrawnFor := 0
-        if not na(lastSwingLowBar)
-            array.push(bullChainBars, lastSwingLowBar)
-            array.push(bullChainPrices, lastSwingLow)
+        if not na(anchorLowBar)
+            array.push(bullChainBars, anchorLowBar)
+            array.push(bullChainPrices, anchorLowVal)
         array.push(bullChainBars, bar_index)
         array.push(bullChainPrices, close)
         bullChainChanged := true
@@ -140,9 +145,9 @@ if bearishBreakNow
         array.clear(bearChainBars)
         array.clear(bearChainPrices)
         bearSegmentsDrawnFor := 0
-        if not na(lastSwingHighBar)
-            array.push(bearChainBars, lastSwingHighBar)
-            array.push(bearChainPrices, lastSwingHigh)
+        if not na(anchorHighBar)
+            array.push(bearChainBars, anchorHighBar)
+            array.push(bearChainPrices, anchorHighVal)
         array.push(bearChainBars, bar_index)
         array.push(bearChainPrices, close)
         bearChainChanged := true
@@ -228,6 +233,19 @@ if trackingBull and (bullTrigger or bullChainChanged) and bullChainLen >= 2
         seg = line.new(array.get(bullChainBars, i), array.get(bullChainPrices, i), array.get(bullChainBars, i + 1), array.get(bullChainPrices, i + 1), extend=extend.none, color=bullColor, width=2)
         array.push(bullSegments, seg)
     bullSegmentsDrawnFor := bullChainLen - 1
+    // A small overshoot past the chain's actual last point, projected
+    // along the final segment's slope, so the line doesn't stop dead
+    // exactly at the most recent touch -- closer to how a hand-drawn
+    // trend line usually runs slightly past its last contact point.
+    if extendBars > 0
+        if not na(bullCapLine)
+            line.delete(bullCapLine)
+        bullLastBar   = array.get(bullChainBars, bullChainLen - 1)
+        bullLastPrice = array.get(bullChainPrices, bullChainLen - 1)
+        bullPrevBar   = array.get(bullChainBars, bullChainLen - 2)
+        bullPrevPrice = array.get(bullChainPrices, bullChainLen - 2)
+        bullSlope     = (bullLastPrice - bullPrevPrice) / (bullLastBar - bullPrevBar)
+        bullCapLine := line.new(bullLastBar, bullLastPrice, bullLastBar + extendBars, bullLastPrice + bullSlope * extendBars, extend=extend.none, color=bullColor, width=2)
 
 if trackingBear and (bearTrigger or bearChainChanged) and bearChainLen >= 2
     bearStart = math.min(bearSegmentsDrawnFor, bearChainLen - 2)
@@ -236,6 +254,15 @@ if trackingBear and (bearTrigger or bearChainChanged) and bearChainLen >= 2
         seg = line.new(array.get(bearChainBars, i), array.get(bearChainPrices, i), array.get(bearChainBars, i + 1), array.get(bearChainPrices, i + 1), extend=extend.none, color=bearColor, width=2)
         array.push(bearSegments, seg)
     bearSegmentsDrawnFor := bearChainLen - 1
+    if extendBars > 0
+        if not na(bearCapLine)
+            line.delete(bearCapLine)
+        bearLastBar   = array.get(bearChainBars, bearChainLen - 1)
+        bearLastPrice = array.get(bearChainPrices, bearChainLen - 1)
+        bearPrevBar   = array.get(bearChainBars, bearChainLen - 2)
+        bearPrevPrice = array.get(bearChainPrices, bearChainLen - 2)
+        bearSlope     = (bearLastPrice - bearPrevPrice) / (bearLastBar - bearPrevBar)
+        bearCapLine := line.new(bearLastBar, bearLastPrice, bearLastBar + extendBars, bearLastPrice + bearSlope * extendBars, extend=extend.none, color=bearColor, width=2)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
