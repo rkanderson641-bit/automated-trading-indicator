@@ -152,17 +152,23 @@ already-overextended trend:
   for a pullback to form a second confirming pivot.
 - From the moment a trend starts, every confirmed swing low (uptrend) or
   swing high (downtrend) that extends the structure gets collected into a
-  running chain. Once RSI's moving average confirms the trend is stretched
-  (above overbought during a confirmed uptrend = "overextended," or below
-  oversold during a confirmed downtrend = "underextended"), the full chain
-  collected so far is drawn as a series of connected line segments —
-  connecting every qualifying swing point along the move, the same way a
-  trend line is drawn by hand, rather than just the most recent two pivots
-  (which rendered as a real but easily-missed short segment, often hidden
-  under the wider signal labels). The overextended/underextended check
-  uses a level-based "armed" latch rather than a same-bar crossover, so it
-  still fires even when the swing-confirmation lag means the trend
-  structure confirms a few bars after RSI actually crossed the threshold.
+  running chain, seeded immediately with the breakout bar itself as a
+  second point — a confirmed swing pivot needs `swingBars * 2` bars to
+  form, and RSI can cross overbought/oversold faster than that after the
+  breakout, so without this the chain could still only have one point by
+  the time RSI triggers, which silently failed a 2-point minimum and never
+  drew anything. Once RSI's moving average confirms the trend is
+  stretched (above overbought during a confirmed uptrend = "overextended,"
+  or below oversold during a confirmed downtrend = "underextended"), the
+  full chain collected so far is drawn as a series of connected line
+  segments — connecting every qualifying swing point along the move, the
+  same way a trend line is drawn by hand, rather than just the most recent
+  two pivots (which rendered as a real but easily-missed short segment,
+  often hidden under the wider signal labels). The overextended/
+  underextended check uses a level-based "armed" latch rather than a
+  same-bar crossover, so it still fires even when the swing-confirmation
+  lag means the trend structure confirms a few bars after RSI actually
+  crossed the threshold.
 - The chain keeps growing (its segments are redrawn) as new qualifying
   swing points confirm — a pullback that doesn't extend the structure (a
   lower low in an uptrend's chain, a higher high in a downtrend's chain)
