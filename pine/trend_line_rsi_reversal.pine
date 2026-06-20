@@ -18,14 +18,17 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 
 // ---------------------------------------------------------------------------
 // Isolation test: a single, unconditional, brightly-colored diagonal line
-// drawn once, completely independent of all the break/RSI/chain logic
-// below. If even THIS doesn't render, the issue isn't in this script's
-// logic at all -- something on this chart/account is suppressing line.new
-// drawings specifically (labels clearly aren't affected, since BREAK /
-// OVEREXTENDED / etc. all show up fine).
+// drawn once on the most recent bar (guaranteed to be in view, unlike the
+// first attempt which drew at bar 51 of the entire loaded history -- almost
+// certainly off-screen to the left of whatever's currently scrolled into
+// view), completely independent of all the break/RSI/chain logic below. If
+// even THIS doesn't render, the issue isn't in this script's logic at all
+// -- something on this chart/account is suppressing line.new drawings
+// specifically (labels clearly aren't affected, since BREAK / OVEREXTENDED
+// / etc. all show up fine).
 // ---------------------------------------------------------------------------
 var line debugTestLine = na
-if na(debugTestLine) and bar_index > 50
+if barstate.islast and na(debugTestLine)
     debugTestLine := line.new(bar_index - 50, close * 0.97, bar_index, close * 1.03, extend=extend.none, color=color.yellow, width=4)
     label.new(bar_index - 50, close * 0.97, text="DEBUG TEST LINE START", style=label.style_label_right, color=color.new(color.yellow, 30), textcolor=color.black, size=size.normal)
 
