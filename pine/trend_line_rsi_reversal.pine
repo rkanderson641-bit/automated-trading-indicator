@@ -29,18 +29,24 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // to the current bar's close (a value RSI-overbought/oversold conditions
 // guarantee is near a local price extreme) produced a slope so steep that
 // extend.right projected it off the top/bottom of the visible price range
-// within a few bars -- the line was technically still being drawn, just
-// rendered outside the visible candles, which looked identical to no line
-// at all. Using two real, already-confirmed pivots keeps the slope
-// realistic. From there, the line keeps extending to each NEW confirming
-// swing point as the trend continues -- it doesn't need to sit exactly on
-// every point, just connect two points of the move while tracking overall
-// trend structure. The line is only invalidated when a genuine OPPOSITE
-// structure break occurs (the same definition used to confirm trend
-// direction in the first place), not by a tight price check against its
-// most recent point -- RSI peaks/troughs coincide with local price
-// extremes almost by definition, so any tighter check broke the line
-// within a bar or two, before it could ever be seen.
+// within a few bars.
+//
+// Even with two real, already-confirmed pivots, extend.right still
+// projects that same slope indefinitely into the future -- and
+// TradingView excludes infinitely-extending lines from its auto-scale
+// fit, so far enough out the line renders completely outside the visible
+// price range. It's technically still being drawn, just nowhere the chart
+// is looking, which looks identical to no line at all. The line is
+// therefore drawn with extend.none, and its right edge is manually
+// re-pinned to the current bar every bar (re-pivoting to each NEW
+// confirming swing point along the way) instead of being extrapolated. It
+// doesn't need to sit exactly on every point, just connect two points of
+// the move while tracking overall trend structure. The line is only
+// invalidated when a genuine OPPOSITE structure break occurs (the same
+// definition used to confirm trend direction in the first place), not by
+// a tight price check against its most recent point -- RSI peaks/troughs
+// coincide with local price extremes almost by definition, so any tighter
+// check broke the line within a bar or two, before it could ever be seen.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -169,7 +175,7 @@ if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
     bullStartPrice := swingLow1
     bullLastBar    := swingLowBar2
     bullLastPrice  := swingLow2
-    bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.right, color=bullColor, width=2)
+    bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.none, color=bullColor, width=2)
     trackingBull   := true
     if showLabels
         label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
@@ -183,7 +189,7 @@ if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
     bearStartPrice := swingHigh1
     bearLastBar    := swingHighBar2
     bearLastPrice  := swingHigh2
-    bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.right, color=bearColor, width=2)
+    bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.none, color=bearColor, width=2)
     trackingBear   := true
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
@@ -191,21 +197,28 @@ if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
         label.new(bearStartBar, bearStartPrice, text="ANCHOR", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
 
 // ---------------------------------------------------------------------------
-// While still tracking, extend the line to each new confirming swing point
-// in the same direction, re-pivoting its slope. No price-based break check
-// here -- invalidation is handled above via the opposite structure break.
+// While still tracking, keep the line's right edge pinned to the current
+// bar every bar (extend=extend.none, manually advanced) rather than using
+// extend.right's automatic slope projection. TradingView excludes
+// infinitely-extending lines from its auto-scale calculation, so once
+// that projection ran far enough past the anchor, the line rendered
+// completely outside the visible/auto-scaled price range -- it was being
+// drawn, just nowhere the chart was looking. Re-pivoting to each new
+// confirming swing point still happens, just without ever extrapolating
+// past the latest known price. No price-based break check here --
+// invalidation is handled above via the opposite structure break.
 // ---------------------------------------------------------------------------
 if trackingBull and not na(bullLine)
     if not na(pivotLowVal) and pivotLowVal > bullLastPrice
-        bullLastBar   := pivotBarIdx
         bullLastPrice := pivotLowVal
-        line.set_xy2(bullLine, bullLastBar, bullLastPrice)
+    bullLastBar := bar_index
+    line.set_xy2(bullLine, bullLastBar, bullLastPrice)
 
 if trackingBear and not na(bearLine)
     if not na(pivotHighVal) and pivotHighVal < bearLastPrice
-        bearLastBar   := pivotBarIdx
         bearLastPrice := pivotHighVal
-        line.set_xy2(bearLine, bearLastBar, bearLastPrice)
+    bearLastBar := bar_index
+    line.set_xy2(bearLine, bearLastBar, bearLastPrice)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")

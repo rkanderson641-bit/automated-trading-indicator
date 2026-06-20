@@ -162,10 +162,15 @@ already-overextended trend:
   "armed" latch rather than a same-bar crossover, so it still fires even
   when the swing-confirmation lag means the trend structure confirms a
   few bars after RSI actually crossed the threshold.
-- From there, the line keeps extending to each new confirming swing point
-  as the trend continues, re-pivoting its slope each time. It doesn't
-  need to sit exactly on every point in between — just connect two points
-  of the move while tracking overall trend structure.
+- The line is drawn without TradingView's automatic right-extension —
+  TradingView excludes infinitely-extending lines from its auto-scale fit,
+  so a sloped line projected indefinitely into the future can render
+  completely outside the visible price range (still drawn, just nowhere
+  the chart is looking). Instead, its right edge is manually re-pinned to
+  the current bar every bar, re-pivoting to each new confirming swing
+  point as the trend continues. It doesn't need to sit exactly on every
+  point in between — just connect two points of the move while tracking
+  overall trend structure.
 - The line is only invalidated by a genuine OPPOSITE structure break (the
   same definition used to confirm trend direction), not a tight check
   against its own most recent point — RSI peaks/troughs coincide with
