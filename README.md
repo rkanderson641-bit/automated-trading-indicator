@@ -183,13 +183,16 @@ already-overextended trend:
   along the line's own slope, so it doesn't stop dead exactly at the last
   touch — closer to how a hand-drawn trend line usually runs slightly
   past its last contact point.
-- The opposite-direction break level (the level price needs to clear to
-  flip the OTHER way) freezes once a trend is confirmed, instead of
-  continuing to ratchet toward every new lower-high (or higher-low) pivot
-  as the trend progresses — letting it keep ratcheting made it
-  progressively easier for a minor pullback to spuriously trigger a
-  "break" in the opposite direction, drawing a trend line in the wrong
-  direction entirely, mid-trend.
+- The break level always ratchets to the most recent confirmed pivot,
+  regardless of current trend state. A close back above the most recent
+  lower-high pivot (or below the most recent higher-low) is a legitimate
+  micro-reversal/bounce — exactly what this indicator is meant to catch,
+  even within a larger trend. An earlier attempt froze the
+  opposite-direction level once a trend was confirmed, on the theory that
+  a reversal-direction line appearing mid-trend was a bug, but that meant
+  a reversal had to clear the price level from before the entire PRIOR
+  trend even started — an almost unreachable bar after any real move —
+  so breaks (and therefore lines) almost stopped firing at all.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in

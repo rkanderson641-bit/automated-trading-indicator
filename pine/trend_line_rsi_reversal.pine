@@ -53,14 +53,20 @@ var float breakLastLow    = na
 var bool  hadBullishBreak = false
 var bool  hadBearishBreak = false
 
-// Freeze the OPPOSITE-direction break level once a trend is confirmed.
-// Letting it keep ratcheting to every new lower-high (or higher-low)
-// pivot as the trend progressed made it progressively easier for a minor
-// pullback to spuriously trigger a "break" in the opposite direction --
-// drawing a trend line in the wrong direction entirely, mid-trend.
-if not na(pivotHighVal) and not hadBearishBreak
+// breakLastHigh/breakLastLow always ratchet to the most recent confirmed
+// pivot, regardless of current trend state. An earlier attempt froze the
+// OPPOSITE-direction level once a trend was confirmed, on the theory that
+// a reversal-direction line appearing mid-trend was a bug -- but a close
+// back above the most recent lower-high pivot (or below the most recent
+// higher-low) IS a legitimate micro-reversal/bounce, which is exactly
+// what this indicator is meant to catch, even within a larger trend.
+// Freezing the level meant a reversal had to clear the price level from
+// before the ENTIRE prior trend even started -- an almost unreachable
+// bar after any real move -- so breaks (and therefore lines) almost
+// stopped firing at all.
+if not na(pivotHighVal)
     breakLastHigh := pivotHighVal
-if not na(pivotLowVal) and not hadBullishBreak
+if not na(pivotLowVal)
     breakLastLow := pivotLowVal
 
 bullishBreakNowRaw = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
