@@ -17,6 +17,19 @@ showLabels      = input.bool(true, "Show signal/break labels", group="Style")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
+// Isolation test: a single, unconditional, brightly-colored diagonal line
+// drawn once, completely independent of all the break/RSI/chain logic
+// below. If even THIS doesn't render, the issue isn't in this script's
+// logic at all -- something on this chart/account is suppressing line.new
+// drawings specifically (labels clearly aren't affected, since BREAK /
+// OVEREXTENDED / etc. all show up fine).
+// ---------------------------------------------------------------------------
+var line debugTestLine = na
+if na(debugTestLine) and bar_index > 50
+    debugTestLine := line.new(bar_index - 50, close * 0.97, bar_index, close * 1.03, extend=extend.none, color=color.yellow, width=4)
+    label.new(bar_index - 50, close * 0.97, text="DEBUG TEST LINE START", style=label.style_label_right, color=color.new(color.yellow, 30), textcolor=color.black, size=size.normal)
+
+// ---------------------------------------------------------------------------
 // A 2-point line connecting only the most recent pair of swing pivots was
 // technically rendering, but as a short segment spanning just 15-40 bars --
 // easily lost under the wide signal-label boxes, and nothing like how a
