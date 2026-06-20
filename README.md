@@ -155,16 +155,15 @@ already-overextended trend:
   running chain. Once RSI's moving average confirms the trend is stretched
   (above overbought during a confirmed uptrend = "overextended," or below
   oversold during a confirmed downtrend = "underextended"), the full chain
-  collected so far is drawn as one multi-point line (a Pine `polyline`,
-  not just a 2-point line) — connecting every qualifying swing point along
-  the move, the same way a trend line is drawn by hand, rather than just
-  the most recent two pivots (which rendered as a real but easily-missed
-  short segment, often hidden under the wider signal labels). The
-  overextended/underextended check uses a level-based "armed" latch rather
-  than a same-bar crossover, so it still fires even when the
-  swing-confirmation lag means the trend structure confirms a few bars
-  after RSI actually crossed the threshold.
-- The chain keeps growing (the polyline is redrawn) as new qualifying
+  collected so far is drawn as a series of connected line segments —
+  connecting every qualifying swing point along the move, the same way a
+  trend line is drawn by hand, rather than just the most recent two pivots
+  (which rendered as a real but easily-missed short segment, often hidden
+  under the wider signal labels). The overextended/underextended check
+  uses a level-based "armed" latch rather than a same-bar crossover, so it
+  still fires even when the swing-confirmation lag means the trend
+  structure confirms a few bars after RSI actually crossed the threshold.
+- The chain keeps growing (its segments are redrawn) as new qualifying
   swing points confirm — a pullback that doesn't extend the structure (a
   lower low in an uptrend's chain, a higher high in a downtrend's chain)
   is skipped rather than zig-zagging the line backwards. The chain resets

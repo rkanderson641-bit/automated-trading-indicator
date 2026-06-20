@@ -1,5 +1,5 @@
 //@version=6
-indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labels_count=500, max_polylines_count=100)
+indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -23,19 +23,26 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // trend line is actually drawn by hand: connecting EVERY swing low along an
 // uptrend (or every swing high along a downtrend), not just the last two.
 //
-// This version uses Pine's polyline (multi-point, not limited to 2 points)
-// and accumulates every confirmed swing low (bullish) / swing high
-// (bearish) into a running chain from the moment the structure break starts
-// the trend. The chain only keeps points that continue the trend (a new
+// This version accumulates every confirmed swing low (bullish) / swing
+// high (bearish) into a running chain from the moment the structure break
+// starts the trend, and draws the chain as a series of connected line.new
+// segments (one segment between each consecutive pair of chain points).
+// An actual Pine polyline object was tried first since it's the more
+// natural fit for an arbitrary-length chain, but it never rendered even
+// with a verified, correctly-populated points array -- likely a
+// plan-tier/version restriction on that newer primitive that doesn't throw
+// a loud error. Falling back to plain line.new (the primitive already
+// proven to work everywhere else in this project) avoids that dependency
+// entirely. The chain only keeps points that continue the trend (a new
 // low higher than the last collected low, or a new high lower than the
 // last collected high) -- a pullback that doesn't extend the structure is
 // skipped rather than zig-zagging the line backwards. Once RSI confirms
-// overextension/underextension, the full chain so far is drawn as one
-// polyline, and it keeps growing (redrawn) as new qualifying swing points
-// confirm. The chain resets only when a genuine new trend actually starts
-// (the prior trend was the opposite direction), not on every continuation
-// breakout within an already-established trend. It's invalidated --
-// deleted entirely -- only on a genuine OPPOSITE structure break.
+// overextension/underextension, the full chain so far is drawn, and it
+// keeps growing (redrawn) as new qualifying swing points confirm. The
+// chain resets only when a genuine new trend actually starts (the prior
+// trend was the opposite direction), not on every continuation breakout
+// within an already-established trend. It's invalidated -- deleted
+// entirely -- only on a genuine OPPOSITE structure break.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -69,10 +76,10 @@ var array<float> bullChainPrices = array.new<float>()
 var array<int>   bearChainBars   = array.new<int>()
 var array<float> bearChainPrices = array.new<float>()
 
-var polyline bullPoly     = na
-var polyline bearPoly     = na
-var bool     trackingBull = false
-var bool     trackingBear = false
+var array<line> bullSegments = array.new<line>()
+var array<line> bearSegments = array.new<line>()
+var bool        trackingBull = false
+var bool        trackingBear = false
 
 bullBreak = false
 bearBreak = false
@@ -99,9 +106,10 @@ if bullishBreakNow
         bearBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
-        if not na(bearPoly)
-            polyline.delete(bearPoly)
-            bearPoly := na
+        if array.size(bearSegments) > 0
+            for i = 0 to array.size(bearSegments) - 1
+                line.delete(array.get(bearSegments, i))
+            array.clear(bearSegments)
         trackingBear := false
 
 if bearishBreakNow
@@ -124,9 +132,10 @@ if bearishBreakNow
         bullBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
-        if not na(bullPoly)
-            polyline.delete(bullPoly)
-            bullPoly := na
+        if array.size(bullSegments) > 0
+            for i = 0 to array.size(bullSegments) - 1
+                line.delete(array.get(bullSegments, i))
+            array.clear(bullSegments)
         trackingBull := false
 
 // Collect additional swing points into the active chain as the trend
@@ -176,23 +185,27 @@ if bearTrigger
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
-// (Re)draw the polyline whenever it's actively being tracked and either
-// just started or just grew a new point.
+// (Re)draw the chain as connected line.new segments whenever it's
+// actively being tracked and either just started or just grew a new
+// point: delete all previous segments, then draw one line.new between
+// each consecutive pair of chain points.
 if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
-    if not na(bullPoly)
-        polyline.delete(bullPoly)
-    bullPts = array.new<chart.point>()
-    for i = 0 to array.size(bullChainBars) - 1
-        array.push(bullPts, chart.point.from_index(array.get(bullChainBars, i), array.get(bullChainPrices, i)))
-    bullPoly := polyline.new(bullPts, curved=false, closed=false, line_color=bullColor, line_width=2)
+    if array.size(bullSegments) > 0
+        for i = 0 to array.size(bullSegments) - 1
+            line.delete(array.get(bullSegments, i))
+        array.clear(bullSegments)
+    for i = 0 to array.size(bullChainBars) - 2
+        seg = line.new(array.get(bullChainBars, i), array.get(bullChainPrices, i), array.get(bullChainBars, i + 1), array.get(bullChainPrices, i + 1), extend=extend.none, color=bullColor, width=2)
+        array.push(bullSegments, seg)
 
 if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
-    if not na(bearPoly)
-        polyline.delete(bearPoly)
-    bearPts = array.new<chart.point>()
-    for i = 0 to array.size(bearChainBars) - 1
-        array.push(bearPts, chart.point.from_index(array.get(bearChainBars, i), array.get(bearChainPrices, i)))
-    bearPoly := polyline.new(bearPts, curved=false, closed=false, line_color=bearColor, line_width=2)
+    if array.size(bearSegments) > 0
+        for i = 0 to array.size(bearSegments) - 1
+            line.delete(array.get(bearSegments, i))
+        array.clear(bearSegments)
+    for i = 0 to array.size(bearChainBars) - 2
+        seg = line.new(array.get(bearChainBars, i), array.get(bearChainPrices, i), array.get(bearChainBars, i + 1), array.get(bearChainPrices, i + 1), extend=extend.none, color=bearColor, width=2)
+        array.push(bearSegments, seg)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
