@@ -150,69 +150,42 @@ already-overextended trend:
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
   for a pullback to form a second confirming pivot.
-- From the moment a trend starts, every confirmed swing low (uptrend) or
-  swing high (downtrend) that extends the structure gets collected into a
-  running chain. It's seeded with the true most recent swing high/low at
-  breakout time (found directly via `ta.highestbars`/`ta.lowestbars`, with
-  no confirmation lag) paired with the breakout bar itself — confirmed
-  pivots need `swingBars * 2` bars to form and lag the actual peak/trough
-  by `swingBars` bars, which both risked leaving too few points to draw
-  from and could anchor to an older, less relevant high/low than the one
-  visually obvious on the chart. Once RSI's moving average confirms the
-  trend is stretched (above overbought during a confirmed uptrend =
-  "overextended," or below oversold during a confirmed downtrend =
-  "underextended"), the full chain collected so far is drawn as a series
-  of connected line segments — connecting every qualifying swing point
-  along the move, the same way a trend line is drawn by hand, rather than
-  just the most recent two pivots. The overextended/underextended check
-  uses a level-based "armed" latch rather than a same-bar crossover, so it
-  still fires even when the swing-confirmation lag means the trend
+- A trend line is exactly 2 points — the two most recently confirmed swing
+  pivots in the trend's direction (two swing lows for an uptrend, two
+  swing highs for a downtrend). Every point is a real confirmed wick,
+  never a synthetic point like the current bar's close, which can land
+  inside a candle's body and make the line cut through printed candles
+  instead of touching their corners/wicks. It's drawn the moment RSI's
+  moving average confirms the trend is stretched (above overbought during
+  a confirmed uptrend = "overextended," or below oversold during a
+  confirmed downtrend = "underextended"). The overextended/underextended
+  check uses a level-based "armed" latch rather than a same-bar crossover,
+  so it still fires even when the swing-confirmation lag means the trend
   structure confirms a few bars after RSI actually crossed the threshold.
-- The chain keeps growing (new segments get added) as new qualifying
-  swing points confirm — a pullback that doesn't extend the structure (a
-  lower low in an uptrend's chain, a higher high in a downtrend's chain)
-  is skipped rather than zig-zagging the line backwards. The chain resets
-  only when a genuine new trend actually starts, not on every continuation
-  breakout within an already-established trend.
-- The seed anchor's lookback window (`Seed anchor lookback`, default 50
-  bars) needs to be wide enough to actually reach the real swing extreme
-  that preceded the breakout — too short a window picked a more recent
-  but less extreme point instead. The breakout bar's own close is only
-  used as a placeholder second point until a genuine pivot confirms; new
-  candidate pivots are compared against the last REAL point (skipping
-  that placeholder) so a legitimate bounce isn't wrongly rejected for
-  landing on the wrong side of it, and a confirming pivot replaces the
-  placeholder rather than trailing after it.
-- Each line's most recent segment also gets a small overshoot
+- The line does NOT grow into a multi-point chain. It only "rolls"
+  forward — replacing its older point with its newer one and adopting the
+  newest confirmed pivot — when a fresh pivot actually extends the
+  structure (a higher low for an uptrend, a lower high for a downtrend). A
+  pullback that doesn't extend the structure is ignored rather than
+  zig-zagging the line backwards.
+- If price moves more than `Freeze line if price diverges beyond` (default
+  2x ATR) past the line's own projection with no new pivot to extend it,
+  the line freezes exactly as last drawn — left on the chart, same as a
+  completed leg ended by a genuine opposite break — rather than trailing
+  further and further behind. A fresh 2-point line starts automatically
+  once two confirmed pivots newer than the frozen line's far point exist,
+  picking up the newest leg of the move on the same rules.
+- The line's far point also gets a small overshoot
   (`Extend each line past its last point`, default 8 bars) projected
-  along that segment's own slope, so the line doesn't stop dead exactly
-  at the last touch — closer to how a hand-drawn trend line usually runs
-  slightly past its last contact point.
-- Once a segment is drawn it stays on the chart for the rest of the
-  session — lines are never deleted, even after a genuine opposite
-  structure break flags the move as over, so the full history of
+  along the line's own slope, so it doesn't stop dead exactly at the last
+  touch — closer to how a hand-drawn trend line usually runs slightly
+  past its last contact point.
+- Once a line is drawn (whether still rolling, frozen by divergence, or
+  ended by a genuine opposite break) it stays on the chart for the rest of
+  the session — lines are never deleted, so the full history of
   overextended/underextended trend lines for the day remains visible. A
-  break is flagged with its own label and `alertcondition()`.
-- If price keeps running further in the trend direction without ever
-  pulling back to create a new touch point, a fresh line is anchored to
-  the existing line's last touch point and the current bar, so a line is
-  always actively tracking the move as it actually develops. The
-  pre-divergence line is NOT deleted — it stays on the chart exactly as
-  drawn (the same as a completed leg ended by a genuine opposite break)
-  until price eventually comes back to retest its last touch point level.
-- The divergence check (`Re-anchor line if price diverges beyond`,
-  default 2x ATR) is a plain LEVEL comparison against the last touch
-  point's price — no slope/time extrapolation. Two slope-based attempts
-  both failed: comparing against the last two points used a noisy 1-2 bar
-  baseline that got blown through almost every bar (a zigzag of tiny
-  resets each anchored to a bare `close`, which sits near a bar's low in
-  a selloff — looking like the bearish line was wrongly touching lows).
-  Comparing against the chain's first-to-last slope instead extrapolated
-  an early, often-steep short burst over many more bars, predicting a
-  value so extreme price could never actually diverge from it — the line
-  then never re-anchored at all. A flat "is price more than the ATR
-  multiple beyond the last touch, period" check has no such failure mode
-  in either direction.
+  genuine opposite structure break is flagged with its own label and
+  `alertcondition()`.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
