@@ -72,8 +72,18 @@ if not na(pivotHighVal)
 if not na(pivotLowVal)
     breakLastLow := pivotLowVal
 
-bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
-bearishBreakNow = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
+bullishBreakNowRaw = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
+bearishBreakNowRaw = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
+
+// On a rare bar where price simultaneously clears both thresholds (a wide
+// bar straddling both break levels), only let ONE side fire -- letting
+// both bullish/bearish blocks run on the same bar made them fight over
+// the shared hadBullishBreak/hadBearishBreak flags, leaving them
+// momentarily out of sync with which chain was actually still being
+// tracked. Bullish takes priority arbitrarily; this case is rare enough
+// that the choice of which side wins doesn't meaningfully matter.
+bullishBreakNow = bullishBreakNowRaw
+bearishBreakNow = bearishBreakNowRaw and not bullishBreakNowRaw
 
 var array<int>   bullChainBars   = array.new<int>()
 var array<float> bullChainPrices = array.new<float>()
@@ -199,17 +209,33 @@ if bearTrigger
 // ends and a new chain starts forming -- only the most recent unbroken
 // run of segments gets extended/redrawn as the chain grows; segments
 // drawn for an already-completed leg are permanent history.
-if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
-    for i = bullSegmentsDrawnFor to array.size(bullChainBars) - 2
+// Both arrays in a chain pair (bars/prices) are always pushed to together,
+// but bullSegmentsDrawnFor is a separately-tracked var that can end up
+// stale relative to the chain's current size in edge cases (e.g. a bar
+// where price simultaneously satisfies both the bullish and bearish break
+// thresholds, briefly flipping hadBullishBreak/hadBearishBreak twice in
+// one bar). Clamping the loop bound to the smaller of the two array
+// sizes, and clamping the start index down to a valid range, guarantees
+// array.get() is never called with an out-of-bounds index regardless of
+// how that staleness arises.
+bullChainLen = math.min(array.size(bullChainBars), array.size(bullChainPrices))
+bearChainLen = math.min(array.size(bearChainBars), array.size(bearChainPrices))
+
+if trackingBull and (bullTrigger or bullChainChanged) and bullChainLen >= 2
+    bullStart = math.min(bullSegmentsDrawnFor, bullChainLen - 2)
+    bullStart := math.max(bullStart, 0)
+    for i = bullStart to bullChainLen - 2
         seg = line.new(array.get(bullChainBars, i), array.get(bullChainPrices, i), array.get(bullChainBars, i + 1), array.get(bullChainPrices, i + 1), extend=extend.none, color=bullColor, width=2)
         array.push(bullSegments, seg)
-    bullSegmentsDrawnFor := array.size(bullChainBars) - 1
+    bullSegmentsDrawnFor := bullChainLen - 1
 
-if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
-    for i = bearSegmentsDrawnFor to array.size(bearChainBars) - 2
+if trackingBear and (bearTrigger or bearChainChanged) and bearChainLen >= 2
+    bearStart = math.min(bearSegmentsDrawnFor, bearChainLen - 2)
+    bearStart := math.max(bearStart, 0)
+    for i = bearStart to bearChainLen - 2
         seg = line.new(array.get(bearChainBars, i), array.get(bearChainPrices, i), array.get(bearChainBars, i + 1), array.get(bearChainPrices, i + 1), extend=extend.none, color=bearColor, width=2)
         array.push(bearSegments, seg)
-    bearSegmentsDrawnFor := array.size(bearChainBars) - 1
+    bearSegmentsDrawnFor := bearChainLen - 1
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
