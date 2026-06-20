@@ -204,6 +204,14 @@ already-overextended trend:
   line is NOT deleted — it stays on the chart exactly as drawn (the same
   as a completed leg ended by a genuine opposite break) until price
   eventually comes back to retest its last touch point level.
+- The divergence check uses the slope between the chain's FIRST and LAST
+  point (the move's overall average steepness), not just the most recent
+  two points — a 2-point slope right after a reset is too noisy (often
+  just 1-2 bars apart) and got blown through again almost immediately,
+  chaining into a zigzag of tiny resets that each anchored to a bare
+  `close` rather than cleanly extending to real swing highs/lows. It also
+  waits at least `swingBars` bars after a chain starts before checking
+  again, so a brand-new line gets a chance to establish itself first.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
