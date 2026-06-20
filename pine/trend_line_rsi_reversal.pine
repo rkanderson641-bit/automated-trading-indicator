@@ -7,7 +7,6 @@ indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labe
 swingBars       = input.int(8, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
 atrLen          = input.int(14, "ATR Length", minval=1, group="Trend Structure")
 minBreakAtrMult = input.float(1.0, "Minimum break size (x ATR)", minval=0.1, step=0.1, group="Trend Structure")
-divergeAtrMult  = input.float(2.0, "Freeze line if price diverges beyond (x ATR)", minval=0.1, step=0.1, group="Trend Structure")
 rsiLen          = input.int(14, "RSI Length", minval=1, group="RSI")
 rsiMaLen        = input.int(9, "RSI MA Length", minval=1, group="RSI")
 overbought      = input.float(70, "Overbought (overextended)", group="RSI")
@@ -19,52 +18,34 @@ extendBars      = input.int(8, "Extend each line past its last point (bars)", mi
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
-// A trend line is exactly 2 points: the two most recently confirmed swing
-// pivots in the trend's direction (two swing lows for an uptrend, two
-// swing highs for a downtrend). Every point is a real confirmed wick --
-// never a synthetic point like the current bar's close, which can land
-// inside a candle's body and make the line cut through printed candles
-// instead of touching their corners/wicks.
-//
-// The line does not grow into a multi-point chain. It only "rolls"
-// forward -- replacing its older point with its newer one and adding the
-// newest confirmed pivot -- when a fresh pivot actually extends the
-// structure (a higher low for an uptrend, a lower high for a downtrend).
-// If price moves more than divergeAtrMult x ATR beyond the line's own
-// projection without a new pivot to extend it, the line freezes exactly
-// as drawn (left on the chart, same as a completed leg) until either
-// price comes back to retest it, or two fresh confirmed pivots further
-// out exist to start a new line for the newest leg of the move.
+// A trend line has a fixed origin -- the swing low (uptrend) or swing high
+// (downtrend) that launched the move, captured once when the leg starts --
+// and a far point that continuously tracks the running extreme (the
+// highest high so far for an uptrend, the lowest low so far for a
+// downtrend) using each bar's own real wick. It updates every single bar
+// a new extreme prints, with no pivot-confirmation lag, so it never falls
+// behind price the way a pivot-gated chain did. If price stops making new
+// extremes, the line simply stays put at the last one until either price
+// resumes extending it or a genuine opposite structure break ends the leg
+// (at which point the line freezes permanently, left on the chart).
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 pivotBarIdx  = bar_index - swingBars
 
-var float swingHigh1    = na
-var float swingHigh2    = na
-var int   swingHighBar1 = na
-var int   swingHighBar2 = na
-var float swingLow1     = na
-var float swingLow2     = na
-var int   swingLowBar1  = na
-var int   swingLowBar2  = na
+var float lastPivotHigh    = na
+var int   lastPivotHighBar = na
+var float lastPivotLow     = na
+var int   lastPivotLowBar  = na
 
 if not na(pivotHighVal)
-    swingHigh1    := swingHigh2
-    swingHighBar1 := swingHighBar2
-    swingHigh2    := pivotHighVal
-    swingHighBar2 := pivotBarIdx
+    lastPivotHigh    := pivotHighVal
+    lastPivotHighBar := pivotBarIdx
 
 if not na(pivotLowVal)
-    swingLow1    := swingLow2
-    swingLowBar1 := swingLowBar2
-    swingLow2    := pivotLowVal
-    swingLowBar2 := pivotBarIdx
+    lastPivotLow    := pivotLowVal
+    lastPivotLowBar := pivotBarIdx
 
-// Structure break: price closes beyond the most recent prior swing
-// high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
-// opposite break occurs.
-// ---------------------------------------------------------------------------
 atrVal = ta.atr(atrLen)
 
 var float breakLastHigh   = na
@@ -72,10 +53,14 @@ var float breakLastLow    = na
 var bool  hadBullishBreak = false
 var bool  hadBearishBreak = false
 
-if not na(pivotHighVal)
+// Freeze the OPPOSITE-direction break level once a trend is confirmed.
+// Letting it keep ratcheting to every new lower-high (or higher-low)
+// pivot as the trend progressed made it progressively easier for a minor
+// pullback to spuriously trigger a "break" in the opposite direction --
+// drawing a trend line in the wrong direction entirely, mid-trend.
+if not na(pivotHighVal) and not hadBearishBreak
     breakLastHigh := pivotHighVal
-
-if not na(pivotLowVal)
+if not na(pivotLowVal) and not hadBullishBreak
     breakLastLow := pivotLowVal
 
 bullishBreakNowRaw = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
@@ -87,54 +72,64 @@ bearishBreakNowRaw = not na(breakLastLow) and close < breakLastLow - atrVal * mi
 bullishBreakNow = bullishBreakNowRaw
 bearishBreakNow = bearishBreakNowRaw and not bullishBreakNowRaw
 
-var line bullLine       = na
-var line bearLine       = na
-var line bullCapLine    = na
-var line bearCapLine    = na
-var bool trackingBull   = false // true for the whole bullish phase, until the opposite break ends it
-var bool trackingBear   = false
-var bool bullLineActive = false // true while the CURRENT line is still rolling forward
+var line bullLine    = na
+var line bearLine    = na
+var line bullCapLine = na
+var line bearCapLine = na
+var bool trackingBull = false
+var bool trackingBear = false
 
-// The line's own defining points, kept separate from the global
-// swingLow1/swingLow2 pivot trackers above. Those globals shift on ANY
-// new pivot, including a non-extending one (a lower low while the line
-// is tracking an uptrend) -- using them directly for the line's
-// projection/divergence math would silently go out of sync with what's
-// actually drawn whenever a non-extending pivot came through.
-var int   bullLineBar1 = na
-var float bullLineP1   = na
-var int   bullLineBar2 = na
-var float bullLineP2   = na
-var bool  bearLineActive = false
-var int   bearLineBar1 = na
-var float bearLineP1   = na
-var int   bearLineBar2 = na
-var float bearLineP2   = na
+var int   bullOriginBar   = na
+var float bullOriginPrice = na
+var int   bullFarBar      = na
+var float bullFarPrice    = na
+
+var int   bearOriginBar   = na
+var float bearOriginPrice = na
+var int   bearFarBar      = na
+var float bearFarPrice    = na
 
 bullBreak = false
 bearBreak = false
 
 if bullishBreakNow
+    freshBullStart  = not hadBullishBreak
     breakLastHigh   := close
     hadBullishBreak := true
     hadBearishBreak := false
     if showDebug
         label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-    // A fresh bullish break means the downtrend it was tracking no longer
-    // holds. The bearish line itself is left in place on the chart.
+    if freshBullStart
+        bullOriginBar   := lastPivotLowBar
+        bullOriginPrice := lastPivotLow
+        bullFarBar      := bullOriginBar
+        bullFarPrice    := bullOriginPrice
+        // Forget (don't delete) the previous leg's line/cap -- they stay
+        // on the chart as permanent history of that completed leg.
+        bullLine    := na
+        bullCapLine := na
+    // A fresh bullish break means the downtrend it was tracking no
+    // longer holds. The bearish line itself is left in place on the chart.
     if trackingBear
         bearBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
         trackingBear := false
-        bearLineActive := false
 
 if bearishBreakNow
+    freshBearStart  = not hadBearishBreak
     breakLastLow    := close
     hadBearishBreak := true
     hadBullishBreak := false
     if showDebug
         label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    if freshBearStart
+        bearOriginBar   := lastPivotHighBar
+        bearOriginPrice := lastPivotHigh
+        bearFarBar      := bearOriginBar
+        bearFarPrice    := bearOriginPrice
+        bearLine    := na
+        bearCapLine := na
     // A fresh bearish break means the uptrend it was tracking no longer
     // holds. The bullish line itself is left in place on the chart.
     if trackingBull
@@ -142,7 +137,16 @@ if bearishBreakNow
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
         trackingBull := false
-        bullLineActive := false
+
+// Continuously track the running extreme since the leg started -- a real
+// wick value updated every bar, never waiting on pivot confirmation.
+if hadBullishBreak and not na(bullOriginBar) and high > bullFarPrice
+    bullFarBar   := bar_index
+    bullFarPrice := high
+
+if hadBearishBreak and not na(bearOriginBar) and low < bearFarPrice
+    bearFarBar   := bar_index
+    bearFarPrice := low
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)
@@ -172,90 +176,35 @@ if bearTrigger
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
-// ---------------------------------------------------------------------------
-// Start a fresh 2-point line the moment RSI confirms overextended/
-// underextended (or, after a freeze, the moment two confirmed pivots
-// newer than the frozen line's far point exist), using whichever two
-// confirmed swing lows/highs are current right then.
-// ---------------------------------------------------------------------------
-bullNeedsStart = trackingBull and not bullLineActive and not na(swingLowBar1) and not na(swingLowBar2) and (na(bullLineBar2) or swingLowBar1 > bullLineBar2)
-bearNeedsStart = trackingBear and not bearLineActive and not na(swingHighBar1) and not na(swingHighBar2) and (na(bearLineBar2) or swingHighBar1 > bearLineBar2)
+// Draw/update the line for as long as it's being tracked -- the origin
+// never moves; the far point continuously follows the running extreme
+// computed above. extendBars adds a small overshoot past the far point,
+// projected along the line's own slope, so it doesn't stop dead exactly
+// at the last touch.
+if trackingBull and not na(bullOriginBar)
+    if na(bullLine)
+        bullLine := line.new(bullOriginBar, bullOriginPrice, bullFarBar, bullFarPrice, extend=extend.none, color=bullColor, width=2)
+    else
+        line.set_xy2(bullLine, bullFarBar, bullFarPrice)
+    // Only when the far point has actually moved past the origin -- right
+    // when a leg starts, before any new high has printed, they're still
+    // the same point and a slope is undefined (division by zero).
+    if extendBars > 0 and bullFarBar != bullOriginBar
+        if not na(bullCapLine)
+            line.delete(bullCapLine)
+        bullSlope = (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar)
+        bullCapLine := line.new(bullFarBar, bullFarPrice, bullFarBar + extendBars, bullFarPrice + bullSlope * extendBars, extend=extend.none, color=bullColor, width=2)
 
-if bullNeedsStart
-    bullLineBar1 := swingLowBar1
-    bullLineP1   := swingLow1
-    bullLineBar2 := swingLowBar2
-    bullLineP2   := swingLow2
-    bullLine := line.new(bullLineBar1, bullLineP1, bullLineBar2, bullLineP2, extend=extend.none, color=bullColor, width=2)
-    bullLineActive := true
-    // Forget (don't delete) any cap line from a previous, now-frozen
-    // line -- it stays as part of that frozen line's history. The cap
-    // block below creates a brand new one for this fresh line.
-    bullCapLine := na
-
-if bearNeedsStart
-    bearLineBar1 := swingHighBar1
-    bearLineP1   := swingHigh1
-    bearLineBar2 := swingHighBar2
-    bearLineP2   := swingHigh2
-    bearLine := line.new(bearLineBar1, bearLineP1, bearLineBar2, bearLineP2, extend=extend.none, color=bearColor, width=2)
-    bearLineActive := true
-    bearCapLine := na
-
-// While active, roll the line forward whenever a fresh pivot confirms
-// that genuinely extends the structure -- compared against the LINE's
-// own current far point (bullLineP2/bearLineP2), not the global
-// swingLow1/swingHigh1 tracker, which can have already moved on to a
-// non-extending pivot that the line itself never adopted.
-if bullLineActive and not na(pivotLowVal) and pivotLowVal > bullLineP2
-    bullLineBar1 := bullLineBar2
-    bullLineP1   := bullLineP2
-    bullLineBar2 := pivotBarIdx
-    bullLineP2   := pivotLowVal
-    line.set_xy1(bullLine, bullLineBar1, bullLineP1)
-    line.set_xy2(bullLine, bullLineBar2, bullLineP2)
-
-if bearLineActive and not na(pivotHighVal) and pivotHighVal < bearLineP2
-    bearLineBar1 := bearLineBar2
-    bearLineP1   := bearLineP2
-    bearLineBar2 := pivotBarIdx
-    bearLineP2   := pivotHighVal
-    line.set_xy1(bearLine, bearLineBar1, bearLineP1)
-    line.set_xy2(bearLine, bearLineBar2, bearLineP2)
-
-// Divergence: if price has moved more than divergeAtrMult x ATR beyond
-// the active line's own projection with no new pivot to extend it, stop
-// updating -- the line freezes exactly as last drawn. A fresh line will
-// start automatically (via bullNeedsStart/bearNeedsStart above) once two
-// confirmed pivots newer than this frozen point exist.
-if bullLineActive
-    bullSlope = (bullLineP2 - bullLineP1) / (bullLineBar2 - bullLineBar1)
-    bullProjected = bullLineP2 + bullSlope * (bar_index - bullLineBar2)
-    if close > bullProjected + atrVal * divergeAtrMult
-        bullLineActive := false
-
-if bearLineActive
-    bearSlope = (bearLineP2 - bearLineP1) / (bearLineBar2 - bearLineBar1)
-    bearProjected = bearLineP2 + bearSlope * (bar_index - bearLineBar2)
-    if close < bearProjected - atrVal * divergeAtrMult
-        bearLineActive := false
-
-// A small overshoot past the line's actual last point, projected along
-// its own slope, so it doesn't stop dead exactly at the most recent
-// touch -- closer to how a hand-drawn trend line usually runs slightly
-// past its last contact point. Only drawn while the line is active;
-// frozen lines keep whatever overshoot they had at the moment of freezing.
-if bullLineActive and extendBars > 0
-    if not na(bullCapLine)
-        line.delete(bullCapLine)
-    bullSlopeCap = (bullLineP2 - bullLineP1) / (bullLineBar2 - bullLineBar1)
-    bullCapLine := line.new(bullLineBar2, bullLineP2, bullLineBar2 + extendBars, bullLineP2 + bullSlopeCap * extendBars, extend=extend.none, color=bullColor, width=2)
-
-if bearLineActive and extendBars > 0
-    if not na(bearCapLine)
-        line.delete(bearCapLine)
-    bearSlopeCap = (bearLineP2 - bearLineP1) / (bearLineBar2 - bearLineBar1)
-    bearCapLine := line.new(bearLineBar2, bearLineP2, bearLineBar2 + extendBars, bearLineP2 + bearSlopeCap * extendBars, extend=extend.none, color=bearColor, width=2)
+if trackingBear and not na(bearOriginBar)
+    if na(bearLine)
+        bearLine := line.new(bearOriginBar, bearOriginPrice, bearFarBar, bearFarPrice, extend=extend.none, color=bearColor, width=2)
+    else
+        line.set_xy2(bearLine, bearFarBar, bearFarPrice)
+    if extendBars > 0 and bearFarBar != bearOriginBar
+        if not na(bearCapLine)
+            line.delete(bearCapLine)
+        bearSlope = (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar)
+        bearCapLine := line.new(bearFarBar, bearFarPrice, bearFarBar + extendBars, bearFarPrice + bearSlope * extendBars, extend=extend.none, color=bearColor, width=2)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")

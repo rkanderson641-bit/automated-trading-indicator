@@ -150,42 +150,46 @@ already-overextended trend:
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
   for a pullback to form a second confirming pivot.
-- A trend line is exactly 2 points — the two most recently confirmed swing
-  pivots in the trend's direction (two swing lows for an uptrend, two
-  swing highs for a downtrend). Every point is a real confirmed wick,
-  never a synthetic point like the current bar's close, which can land
-  inside a candle's body and make the line cut through printed candles
-  instead of touching their corners/wicks. It's drawn the moment RSI's
-  moving average confirms the trend is stretched (above overbought during
-  a confirmed uptrend = "overextended," or below oversold during a
-  confirmed downtrend = "underextended"). The overextended/underextended
-  check uses a level-based "armed" latch rather than a same-bar crossover,
-  so it still fires even when the swing-confirmation lag means the trend
-  structure confirms a few bars after RSI actually crossed the threshold.
-- The line does NOT grow into a multi-point chain. It only "rolls"
-  forward — replacing its older point with its newer one and adopting the
-  newest confirmed pivot — when a fresh pivot actually extends the
-  structure (a higher low for an uptrend, a lower high for a downtrend). A
-  pullback that doesn't extend the structure is ignored rather than
-  zig-zagging the line backwards.
-- If price moves more than `Freeze line if price diverges beyond` (default
-  2x ATR) past the line's own projection with no new pivot to extend it,
-  the line freezes exactly as last drawn — left on the chart, same as a
-  completed leg ended by a genuine opposite break — rather than trailing
-  further and further behind. A fresh 2-point line starts automatically
-  once two confirmed pivots newer than the frozen line's far point exist,
-  picking up the newest leg of the move on the same rules.
+- A trend line has a FIXED origin — the swing low (uptrend) or swing high
+  (downtrend) that launched the move, captured once when the leg starts —
+  and a far point that continuously tracks the running extreme (the
+  highest high so far for an uptrend, the lowest low so far for a
+  downtrend) using each bar's own real wick. Neither point is ever a
+  synthetic value like the current bar's close, which can land inside a
+  candle's body and make the line cut through printed candles instead of
+  touching their corners/wicks. The far point updates every single bar a
+  new extreme prints, with no pivot-confirmation lag, so the line never
+  falls behind price the way an earlier pivot-gated design did.
+- The line is drawn the moment RSI's moving average confirms the trend is
+  stretched (above overbought during a confirmed uptrend = "overextended,"
+  or below oversold during a confirmed downtrend = "underextended") —
+  using the origin and running extreme already accumulated since the leg
+  began, so it reflects the move's full progress even if RSI confirms a
+  while after the breakout. The overextended/underextended check uses a
+  level-based "armed" latch rather than a same-bar crossover, so it still
+  fires even when the swing-confirmation lag means the trend structure
+  confirms a few bars after RSI actually crossed the threshold.
+- If price stops making new extremes, the line simply stays put at the
+  last one — it does not need a separate "divergence" mechanism, since
+  there's nothing to fall behind: the far point IS the actual running
+  extreme. Only a genuine opposite structure break ends a leg, at which
+  point the line freezes permanently exactly as drawn and stays on the
+  chart as a record of that completed leg — lines are never deleted, so
+  the full history of overextended/underextended trend lines for the day
+  remains visible. The break is flagged with its own label and
+  `alertcondition()`.
 - The line's far point also gets a small overshoot
   (`Extend each line past its last point`, default 8 bars) projected
   along the line's own slope, so it doesn't stop dead exactly at the last
   touch — closer to how a hand-drawn trend line usually runs slightly
   past its last contact point.
-- Once a line is drawn (whether still rolling, frozen by divergence, or
-  ended by a genuine opposite break) it stays on the chart for the rest of
-  the session — lines are never deleted, so the full history of
-  overextended/underextended trend lines for the day remains visible. A
-  genuine opposite structure break is flagged with its own label and
-  `alertcondition()`.
+- The opposite-direction break level (the level price needs to clear to
+  flip the OTHER way) freezes once a trend is confirmed, instead of
+  continuing to ratchet toward every new lower-high (or higher-low) pivot
+  as the trend progresses — letting it keep ratcheting made it
+  progressively easier for a minor pullback to spuriously trigger a
+  "break" in the opposite direction, drawing a trend line in the wrong
+  direction entirely, mid-trend.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
