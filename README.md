@@ -152,35 +152,35 @@ already-overextended trend:
   for a pullback to form a second confirming pivot.
 - From the moment a trend starts, every confirmed swing low (uptrend) or
   swing high (downtrend) that extends the structure gets collected into a
-  running chain, seeded immediately with the breakout bar itself as a
-  second point — a confirmed swing pivot needs `swingBars * 2` bars to
-  form, and RSI can cross overbought/oversold faster than that after the
-  breakout, so without this the chain could still only have one point by
-  the time RSI triggers, which silently failed a 2-point minimum and never
-  drew anything. Once RSI's moving average confirms the trend is
-  stretched (above overbought during a confirmed uptrend = "overextended,"
-  or below oversold during a confirmed downtrend = "underextended"), the
-  full chain collected so far is drawn as a series of connected line
-  segments — connecting every qualifying swing point along the move, the
-  same way a trend line is drawn by hand, rather than just the most recent
-  two pivots (which rendered as a real but easily-missed short segment,
-  often hidden under the wider signal labels). The overextended/
-  underextended check uses a level-based "armed" latch rather than a
-  same-bar crossover, so it still fires even when the swing-confirmation
-  lag means the trend structure confirms a few bars after RSI actually
-  crossed the threshold.
-- The chain keeps growing (its segments are redrawn) as new qualifying
+  running chain. It's seeded with the most recently confirmed swing
+  high/low (tracked continuously, independent of trend state) paired with
+  the breakout bar itself — a confirmed swing pivot needs `swingBars * 2`
+  bars to form, and on most breakout bars there's no FRESH pivot that
+  exact bar, so seeding with only the breakout bar's own pivot (if any)
+  could still leave just one point by the time RSI triggers, which
+  silently failed a 2-point minimum and never drew anything. Once RSI's
+  moving average confirms the trend is stretched (above overbought during
+  a confirmed uptrend = "overextended," or below oversold during a
+  confirmed downtrend = "underextended"), the full chain collected so far
+  is drawn as a series of connected line segments — connecting every
+  qualifying swing point along the move, the same way a trend line is
+  drawn by hand, rather than just the most recent two pivots (which
+  rendered as a real but easily-missed short segment, often hidden under
+  the wider signal labels). The overextended/underextended check uses a
+  level-based "armed" latch rather than a same-bar crossover, so it still
+  fires even when the swing-confirmation lag means the trend structure
+  confirms a few bars after RSI actually crossed the threshold.
+- The chain keeps growing (new segments get added) as new qualifying
   swing points confirm — a pullback that doesn't extend the structure (a
   lower low in an uptrend's chain, a higher high in a downtrend's chain)
   is skipped rather than zig-zagging the line backwards. The chain resets
   only when a genuine new trend actually starts, not on every continuation
   breakout within an already-established trend.
-- The line is only invalidated by a genuine OPPOSITE structure break (the
-  same definition used to confirm trend direction), not a tight check
-  against its own most recent point — RSI peaks/troughs coincide with
-  local price extremes almost by definition, so a tighter check broke the
-  line within a bar or two, before it could ever be seen. A break is
-  flagged with its own label and `alertcondition()`.
+- Once a segment is drawn it stays on the chart for the rest of the
+  session — lines are never deleted, even after a genuine opposite
+  structure break flags the move as over, so the full history of
+  overextended/underextended trend lines for the day remains visible. A
+  break is flagged with its own label and `alertcondition()`.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in

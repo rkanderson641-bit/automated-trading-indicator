@@ -17,36 +17,40 @@ showLabels      = input.bool(true, "Show signal/break labels", group="Style")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
-// A 2-point line connecting only the most recent pair of swing pivots was
-// technically rendering, but as a short segment spanning just 15-40 bars --
-// easily lost under the wide signal-label boxes, and nothing like how a
-// trend line is actually drawn by hand: connecting EVERY swing low along an
-// uptrend (or every swing high along a downtrend), not just the last two.
+// Trend lines connect every confirmed swing low (uptrend) / swing high
+// (downtrend) along the move, drawn as a series of connected line.new
+// segments rather than a single 2-point line. Once a line is drawn it
+// stays on the chart through the end of the session -- it is never
+// deleted, even after an opposite structure break -- so the full history
+// of overextended/underextended trend lines remains visible for the day.
 //
-// This version accumulates every confirmed swing low (bullish) / swing
-// high (bearish) into a running chain from the moment the structure break
-// starts the trend, and draws the chain as a series of connected line.new
-// segments (one segment between each consecutive pair of chain points).
-// An actual Pine polyline object was tried first since it's the more
-// natural fit for an arbitrary-length chain, but it never rendered even
-// with a verified, correctly-populated points array -- likely a
-// plan-tier/version restriction on that newer primitive that doesn't throw
-// a loud error. Falling back to plain line.new (the primitive already
-// proven to work everywhere else in this project) avoids that dependency
-// entirely. The chain only keeps points that continue the trend (a new
-// low higher than the last collected low, or a new high lower than the
-// last collected high) -- a pullback that doesn't extend the structure is
-// skipped rather than zig-zagging the line backwards. Once RSI confirms
-// overextension/underextension, the full chain so far is drawn, and it
-// keeps growing (redrawn) as new qualifying swing points confirm. The
-// chain resets only when a genuine new trend actually starts (the prior
-// trend was the opposite direction), not on every continuation breakout
-// within an already-established trend. It's invalidated -- deleted
-// entirely -- only on a genuine OPPOSITE structure break.
+// Debugging history: a 2-point line connecting only the most recent pair
+// of pivots technically rendered but was a short, easily-missed segment.
+// Switching to a growing chain failed silently at first because the chain
+// was seeded using only the pivot value confirmed on the EXACT breakout
+// bar -- pivots only confirm every swingBars*2 bars, so on most breakout
+// bars there is no fresh pivot, leaving just 1 point (failing a 2-point
+// minimum with no visible symptom other than "no line"). The fix is to
+// track the most recently confirmed swing high/low continuously,
+// independent of trend state, so a real anchor point is always available
+// to pair with the breakout bar when seeding a new chain.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 pivotBarIdx  = bar_index - swingBars
+
+var float lastSwingHigh    = na
+var int   lastSwingHighBar = na
+var float lastSwingLow     = na
+var int   lastSwingLowBar  = na
+
+if not na(pivotHighVal)
+    lastSwingHigh    := pivotHighVal
+    lastSwingHighBar := pivotBarIdx
+
+if not na(pivotLowVal)
+    lastSwingLow    := pivotLowVal
+    lastSwingLowBar := pivotBarIdx
 
 // Structure break: price closes beyond the most recent prior swing
 // high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
@@ -76,10 +80,13 @@ var array<float> bullChainPrices = array.new<float>()
 var array<int>   bearChainBars   = array.new<int>()
 var array<float> bearChainPrices = array.new<float>()
 
-var array<line> bullSegments = array.new<line>()
-var array<line> bearSegments = array.new<line>()
-var bool        trackingBull = false
-var bool        trackingBear = false
+var array<line> bullSegments        = array.new<line>()
+var array<line> bearSegments        = array.new<line>()
+var int         bullSegmentsDrawnFor = 0
+var int         bearSegmentsDrawnFor = 0
+
+var bool trackingBull = false
+var bool trackingBear = false
 
 bullBreak = false
 bearBreak = false
@@ -96,28 +103,20 @@ if bullishBreakNow
     if freshBullStart
         array.clear(bullChainBars)
         array.clear(bullChainPrices)
-        if not na(pivotLowVal)
-            array.push(bullChainBars, pivotBarIdx)
-            array.push(bullChainPrices, pivotLowVal)
-        // Also seed the breakout bar itself as a second point, so there
-        // are always >= 2 points to draw from immediately -- a confirmed
-        // pivot needs swingBars*2 bars to form, and RSI can cross
-        // overbought faster than that after the breakout, leaving only
-        // the single seed point (which failed the >= 2 check below and
-        // silently skipped drawing entirely).
+        bullSegmentsDrawnFor := 0
+        if not na(lastSwingLowBar)
+            array.push(bullChainBars, lastSwingLowBar)
+            array.push(bullChainPrices, lastSwingLow)
         array.push(bullChainBars, bar_index)
         array.push(bullChainPrices, close)
         bullChainChanged := true
-    // A fresh bullish break invalidates any bearish line still being
-    // tracked -- the downtrend it was measuring no longer holds.
+    // A fresh bullish break means the downtrend it was tracking no
+    // longer holds. The bearish line itself is left in place -- it stays
+    // on the chart for the rest of the session rather than being deleted.
     if trackingBear
         bearBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
-        if array.size(bearSegments) > 0
-            for i = 0 to array.size(bearSegments) - 1
-                line.delete(array.get(bearSegments, i))
-            array.clear(bearSegments)
         trackingBear := false
 
 if bearishBreakNow
@@ -130,24 +129,20 @@ if bearishBreakNow
     if freshBearStart
         array.clear(bearChainBars)
         array.clear(bearChainPrices)
-        if not na(pivotHighVal)
-            array.push(bearChainBars, pivotBarIdx)
-            array.push(bearChainPrices, pivotHighVal)
-        // Also seed the breakout bar itself as a second point -- see the
-        // matching comment in the bullish branch above.
+        bearSegmentsDrawnFor := 0
+        if not na(lastSwingHighBar)
+            array.push(bearChainBars, lastSwingHighBar)
+            array.push(bearChainPrices, lastSwingHigh)
         array.push(bearChainBars, bar_index)
         array.push(bearChainPrices, close)
         bearChainChanged := true
-    // A fresh bearish break invalidates any bullish line still being
-    // tracked -- the uptrend it was measuring no longer holds.
+    // A fresh bearish break means the uptrend it was tracking no longer
+    // holds. The bullish line itself is left in place -- see the matching
+    // comment in the bullish branch above.
     if trackingBull
         bullBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
-        if array.size(bullSegments) > 0
-            for i = 0 to array.size(bullSegments) - 1
-                line.delete(array.get(bullSegments, i))
-            array.clear(bullSegments)
         trackingBull := false
 
 // Collect additional swing points into the active chain as the trend
@@ -199,35 +194,22 @@ if bearTrigger
 
 // (Re)draw the chain as connected line.new segments whenever it's
 // actively being tracked and either just started or just grew a new
-// point: delete all previous segments, then draw one line.new between
-// each consecutive pair of chain points.
-bullDrawCond = trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
-bearDrawCond = trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
-
-if showDebug and (bullTrigger or bearTrigger or bullChainChanged or bearChainChanged)
-    label.new(bar_index, close, text="bullChain=" + str.tostring(array.size(bullChainBars)) + " bearChain=" + str.tostring(array.size(bearChainBars)) + " trkBull=" + str.tostring(trackingBull) + " trkBear=" + str.tostring(trackingBear) + " bullDraw=" + str.tostring(bullDrawCond) + " bearDraw=" + str.tostring(bearDrawCond), style=label.style_label_left, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny)
-
-if bullDrawCond
-    if array.size(bullSegments) > 0
-        for i = 0 to array.size(bullSegments) - 1
-            line.delete(array.get(bullSegments, i))
-        array.clear(bullSegments)
-    for i = 0 to array.size(bullChainBars) - 2
+// point. Past segments are left in place (never deleted) so the line
+// stays on the chart for the rest of the session even after the move
+// ends and a new chain starts forming -- only the most recent unbroken
+// run of segments gets extended/redrawn as the chain grows; segments
+// drawn for an already-completed leg are permanent history.
+if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
+    for i = bullSegmentsDrawnFor to array.size(bullChainBars) - 2
         seg = line.new(array.get(bullChainBars, i), array.get(bullChainPrices, i), array.get(bullChainBars, i + 1), array.get(bullChainPrices, i + 1), extend=extend.none, color=bullColor, width=2)
         array.push(bullSegments, seg)
-    if showDebug
-        label.new(bar_index, low, text="DREW " + str.tostring(array.size(bullSegments)) + " BULL SEG", style=label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.normal)
+    bullSegmentsDrawnFor := array.size(bullChainBars) - 1
 
-if bearDrawCond
-    if array.size(bearSegments) > 0
-        for i = 0 to array.size(bearSegments) - 1
-            line.delete(array.get(bearSegments, i))
-        array.clear(bearSegments)
-    for i = 0 to array.size(bearChainBars) - 2
+if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
+    for i = bearSegmentsDrawnFor to array.size(bearChainBars) - 2
         seg = line.new(array.get(bearChainBars, i), array.get(bearChainPrices, i), array.get(bearChainBars, i + 1), array.get(bearChainPrices, i + 1), extend=extend.none, color=bearColor, width=2)
         array.push(bearSegments, seg)
-    if showDebug
-        label.new(bar_index, high, text="DREW " + str.tostring(array.size(bearSegments)) + " BEAR SEG", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.normal)
+    bearSegmentsDrawnFor := array.size(bearChainBars) - 1
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
