@@ -194,24 +194,25 @@ already-overextended trend:
   overextended/underextended trend lines for the day remains visible. A
   break is flagged with its own label and `alertcondition()`.
 - If price keeps running further in the trend direction without ever
-  pulling back to create a new touch point, the existing line's slope
-  (set by older, shallower structure) gets left behind — extrapolating it
-  out would show a value price has already blown through by more than
-  `Re-anchor line if price diverges beyond` (default 2x ATR). Rather than
-  let the line trail further and further behind, a fresh line is anchored
-  to its last touch point and the current bar, so a line is always
-  actively tracking the move as it actually develops. The pre-divergence
-  line is NOT deleted — it stays on the chart exactly as drawn (the same
-  as a completed leg ended by a genuine opposite break) until price
-  eventually comes back to retest its last touch point level.
-- The divergence check uses the slope between the chain's FIRST and LAST
-  point (the move's overall average steepness), not just the most recent
-  two points — a 2-point slope right after a reset is too noisy (often
-  just 1-2 bars apart) and got blown through again almost immediately,
-  chaining into a zigzag of tiny resets that each anchored to a bare
-  `close` rather than cleanly extending to real swing highs/lows. It also
-  waits at least `swingBars` bars after a chain starts before checking
-  again, so a brand-new line gets a chance to establish itself first.
+  pulling back to create a new touch point, a fresh line is anchored to
+  the existing line's last touch point and the current bar, so a line is
+  always actively tracking the move as it actually develops. The
+  pre-divergence line is NOT deleted — it stays on the chart exactly as
+  drawn (the same as a completed leg ended by a genuine opposite break)
+  until price eventually comes back to retest its last touch point level.
+- The divergence check (`Re-anchor line if price diverges beyond`,
+  default 2x ATR) is a plain LEVEL comparison against the last touch
+  point's price — no slope/time extrapolation. Two slope-based attempts
+  both failed: comparing against the last two points used a noisy 1-2 bar
+  baseline that got blown through almost every bar (a zigzag of tiny
+  resets each anchored to a bare `close`, which sits near a bar's low in
+  a selloff — looking like the bearish line was wrongly touching lows).
+  Comparing against the chain's first-to-last slope instead extrapolated
+  an early, often-steep short burst over many more bars, predicting a
+  value so extreme price could never actually diverge from it — the line
+  then never re-anchored at all. A flat "is price more than the ATR
+  multiple beyond the last touch, period" check has no such failure mode
+  in either direction.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in

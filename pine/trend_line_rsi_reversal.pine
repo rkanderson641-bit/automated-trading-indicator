@@ -259,38 +259,31 @@ bullChainLen = math.min(array.size(bullChainBars), array.size(bullChainPrices))
 bearChainLen = math.min(array.size(bearChainBars), array.size(bearChainPrices))
 
 // If price keeps moving further in the trend direction without ever
-// pulling back to create a new touch point, the existing line's slope
-// (set by older, shallower structure) gets left behind -- extrapolating
-// it out shows a value price has already blown through by more than
-// divergeAtrMult x ATR. Rather than let the line trail further and
-// further behind, a fresh one is anchored to its last touch point and
-// the current bar, so the line keeps representing the move it's actually
-// measuring. The pre-divergence line is NOT deleted -- it's left drawn
-// exactly as it was (same as a genuine opposite-break completion) until
-// price eventually comes back to retest its last touch point level; only
-// the bookkeeping (chain arrays, placeholder flag, draw-progress counter)
-// resets so the NEW chain starts fresh from that point forward.
+// pulling back to create a new touch point, a fresh line gets anchored to
+// the existing line's last touch point and the current bar, so a line is
+// always actively tracking the move as it actually develops. The
+// pre-divergence line is NOT deleted -- it's left drawn exactly as it was
+// (same as a genuine opposite-break completion) until price eventually
+// comes back to retest its last touch point level; only the bookkeeping
+// (chain arrays, placeholder flag, draw-progress counter) resets so the
+// NEW chain starts fresh from that point forward.
 //
-// Two things kept this re-triggering almost every bar during a fast move,
-// producing a zigzag of tiny resets that each anchored to a bare `close`
-// (which sits near the bar's low in a selloff, looking like the line was
-// wrongly touching lows instead of highs): (1) the slope was computed
-// from just the last TWO points, often only 1-2 bars apart right after a
-// reset -- an extremely noisy basis that gets blown through again almost
-// immediately; and (2) there was no cooldown, so a brand-new 2-point
-// chain (real touch + placeholder) could immediately re-divergence-check
-// itself. Using the slope from the chain's FIRST point to its last (the
-// overall move's average steepness, not a single noisy segment) and
-// requiring at least swingBars bars since the chain started before
-// checking again fixes both.
-if trackingBull and bullChainLen >= 2 and bar_index - array.get(bullChainBars, 0) >= swingBars
-    bullFirstBarChk   = array.get(bullChainBars, 0)
-    bullFirstPriceChk = array.get(bullChainPrices, 0)
-    bullLastBarChk    = array.get(bullChainBars, bullChainLen - 1)
-    bullLastPriceChk  = array.get(bullChainPrices, bullChainLen - 1)
-    bullSlopeChk = (bullLastPriceChk - bullFirstPriceChk) / (bullLastBarChk - bullFirstBarChk)
-    bullPredicted = bullLastPriceChk + bullSlopeChk * (bar_index - bullLastBarChk)
-    if close > bullPredicted + atrVal * divergeAtrMult
+// This is a plain LEVEL check against the last touch point's price --
+// no slope/time extrapolation at all. Two earlier slope-based attempts
+// both failed: comparing against the last TWO points used a noisy 1-2 bar
+// baseline that got blown through almost every bar (a zigzag of tiny
+// resets each anchored to a bare `close`, which sits near a bar's low in
+// a selloff -- looking like the bearish line was wrongly touching lows).
+// Comparing against the chain's first-to-last slope instead extrapolated
+// an early, often-steep short burst over many more bars, predicting a
+// value so extreme price could never actually diverge from it -- the
+// line then never re-anchored at all. A flat "is price more than
+// divergeAtrMult x ATR beyond the last touch, period" check has no such
+// failure mode in either direction.
+if trackingBull and bullChainLen >= 2
+    bullLastBarChk   = array.get(bullChainBars, bullChainLen - 1)
+    bullLastPriceChk = array.get(bullChainPrices, bullChainLen - 1)
+    if close > bullLastPriceChk + atrVal * divergeAtrMult
         bullCapLine := na
         array.clear(bullChainBars)
         array.clear(bullChainPrices)
@@ -302,14 +295,10 @@ if trackingBull and bullChainLen >= 2 and bar_index - array.get(bullChainBars, 0
         bullSegmentsDrawnFor := 0
         bullChainChanged := true
 
-if trackingBear and bearChainLen >= 2 and bar_index - array.get(bearChainBars, 0) >= swingBars
-    bearFirstBarChk   = array.get(bearChainBars, 0)
-    bearFirstPriceChk = array.get(bearChainPrices, 0)
-    bearLastBarChk    = array.get(bearChainBars, bearChainLen - 1)
-    bearLastPriceChk  = array.get(bearChainPrices, bearChainLen - 1)
-    bearSlopeChk = (bearLastPriceChk - bearFirstPriceChk) / (bearLastBarChk - bearFirstBarChk)
-    bearPredicted = bearLastPriceChk + bearSlopeChk * (bar_index - bearLastBarChk)
-    if close < bearPredicted - atrVal * divergeAtrMult
+if trackingBear and bearChainLen >= 2
+    bearLastBarChk   = array.get(bearChainBars, bearChainLen - 1)
+    bearLastPriceChk = array.get(bearChainPrices, bearChainLen - 1)
+    if close < bearLastPriceChk - atrVal * divergeAtrMult
         bearCapLine := na
         array.clear(bearChainBars)
         array.clear(bearChainPrices)
