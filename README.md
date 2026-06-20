@@ -150,27 +150,26 @@ already-overextended trend:
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
   for a pullback to form a second confirming pivot.
-- Once RSI's moving average confirms the trend is stretched (above
-  overbought during a confirmed uptrend = "overextended," or below
-  oversold during a confirmed downtrend = "underextended"), the trend
-  line is drawn connecting the last two confirmed swing pivots in the
-  trend's direction (two swing lows for an uptrend, two swing highs for a
-  downtrend) — never the current/live close, since RSI overbought/oversold
-  conditions put the close near a local price extreme, which made the
-  line's slope so steep it projected off the visible price range within a
-  few bars. The overextended/underextended check uses a level-based
-  "armed" latch rather than a same-bar crossover, so it still fires even
-  when the swing-confirmation lag means the trend structure confirms a
-  few bars after RSI actually crossed the threshold.
-- The line is drawn without TradingView's automatic right-extension —
-  TradingView excludes infinitely-extending lines from its auto-scale fit,
-  so a sloped line projected indefinitely into the future can render
-  completely outside the visible price range (still drawn, just nowhere
-  the chart is looking). Instead, its right edge is manually re-pinned to
-  the current bar every bar, re-pivoting to each new confirming swing
-  point as the trend continues. It doesn't need to sit exactly on every
-  point in between — just connect two points of the move while tracking
-  overall trend structure.
+- From the moment a trend starts, every confirmed swing low (uptrend) or
+  swing high (downtrend) that extends the structure gets collected into a
+  running chain. Once RSI's moving average confirms the trend is stretched
+  (above overbought during a confirmed uptrend = "overextended," or below
+  oversold during a confirmed downtrend = "underextended"), the full chain
+  collected so far is drawn as one multi-point line (a Pine `polyline`,
+  not just a 2-point line) — connecting every qualifying swing point along
+  the move, the same way a trend line is drawn by hand, rather than just
+  the most recent two pivots (which rendered as a real but easily-missed
+  short segment, often hidden under the wider signal labels). The
+  overextended/underextended check uses a level-based "armed" latch rather
+  than a same-bar crossover, so it still fires even when the
+  swing-confirmation lag means the trend structure confirms a few bars
+  after RSI actually crossed the threshold.
+- The chain keeps growing (the polyline is redrawn) as new qualifying
+  swing points confirm — a pullback that doesn't extend the structure (a
+  lower low in an uptrend's chain, a higher high in a downtrend's chain)
+  is skipped rather than zig-zagging the line backwards. The chain resets
+  only when a genuine new trend actually starts, not on every continuation
+  breakout within an already-established trend.
 - The line is only invalidated by a genuine OPPOSITE structure break (the
   same definition used to confirm trend direction), not a tight check
   against its own most recent point — RSI peaks/troughs coincide with

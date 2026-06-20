@@ -1,5 +1,5 @@
 //@version=6
-indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labels_count=500, max_polylines_count=100)
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -17,70 +17,36 @@ showLabels      = input.bool(true, "Show signal/break labels", group="Style")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
-// Trend direction uses a structure-break definition (same as
-// reversal_confluence.pine): a close beyond the most recent prior swing
-// high/low confirms a bullish/bearish trend immediately, without waiting
-// for a pullback to form a second confirming pivot.
+// A 2-point line connecting only the most recent pair of swing pivots was
+// technically rendering, but as a short segment spanning just 15-40 bars --
+// easily lost under the wide signal-label boxes, and nothing like how a
+// trend line is actually drawn by hand: connecting EVERY swing low along an
+// uptrend (or every swing high along a downtrend), not just the last two.
 //
-// Once RSI confirms the trend is overextended/underextended, the trend
-// line is drawn connecting the last TWO CONFIRMED SWING PIVOTS in the
-// trend's direction (two swing lows for an uptrend, two swing highs for a
-// downtrend) -- never the current/live close. Anchoring the second point
-// to the current bar's close (a value RSI-overbought/oversold conditions
-// guarantee is near a local price extreme) produced a slope so steep that
-// extend.right projected it off the top/bottom of the visible price range
-// within a few bars.
-//
-// Even with two real, already-confirmed pivots, extend.right still
-// projects that same slope indefinitely into the future -- and
-// TradingView excludes infinitely-extending lines from its auto-scale
-// fit, so far enough out the line renders completely outside the visible
-// price range. It's technically still being drawn, just nowhere the chart
-// is looking, which looks identical to no line at all. The line is
-// therefore drawn with extend.none, and its right edge is manually
-// re-pinned to the current bar every bar (re-pivoting to each NEW
-// confirming swing point along the way) instead of being extrapolated. It
-// doesn't need to sit exactly on every point, just connect two points of
-// the move while tracking overall trend structure. The line is only
-// invalidated when a genuine OPPOSITE structure break occurs (the same
-// definition used to confirm trend direction in the first place), not by
-// a tight price check against its most recent point -- RSI peaks/troughs
-// coincide with local price extremes almost by definition, so any tighter
-// check broke the line within a bar or two, before it could ever be seen.
+// This version uses Pine's polyline (multi-point, not limited to 2 points)
+// and accumulates every confirmed swing low (bullish) / swing high
+// (bearish) into a running chain from the moment the structure break starts
+// the trend. The chain only keeps points that continue the trend (a new
+// low higher than the last collected low, or a new high lower than the
+// last collected high) -- a pullback that doesn't extend the structure is
+// skipped rather than zig-zagging the line backwards. Once RSI confirms
+// overextension/underextension, the full chain so far is drawn as one
+// polyline, and it keeps growing (redrawn) as new qualifying swing points
+// confirm. The chain resets only when a genuine new trend actually starts
+// (the prior trend was the opposite direction), not on every continuation
+// breakout within an already-established trend. It's invalidated --
+// deleted entirely -- only on a genuine OPPOSITE structure break.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 pivotBarIdx  = bar_index - swingBars
-
-var float swingHigh1    = na
-var float swingHigh2    = na
-var int   swingHighBar1 = na
-var int   swingHighBar2 = na
-var float swingLow1     = na
-var float swingLow2     = na
-var int   swingLowBar1  = na
-var int   swingLowBar2  = na
-
-if not na(pivotHighVal)
-    swingHigh1    := swingHigh2
-    swingHighBar1 := swingHighBar2
-    swingHigh2    := pivotHighVal
-    swingHighBar2 := pivotBarIdx
-
-if not na(pivotLowVal)
-    swingLow1    := swingLow2
-    swingLowBar1 := swingLowBar2
-    swingLow2    := pivotLowVal
-    swingLowBar2 := pivotBarIdx
 
 // Structure break: price closes beyond the most recent prior swing
 // high/low BY AT LEAST minBreakAtrMult x ATR. Stays "armed" until the
 // opposite break occurs. Without the ATR margin, any close even a tick
 // beyond a recent pivot counted as a "break" -- in a choppy multi-day
 // range with many qualifying pivots, that produced a break almost every
-// 2-4 bars in alternating directions, deleting any trend line within a
-// bar or two of it being created and pre-empting the real reversal's
-// TREND BREAK label with an earlier false one.
+// 2-4 bars in alternating directions.
 // ---------------------------------------------------------------------------
 atrVal = ta.atr(atrLen)
 
@@ -98,54 +64,89 @@ if not na(pivotLowVal)
 bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
 bearishBreakNow = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
 
-var line  bullLine      = na
-var bool  trackingBull  = false
-var int   bullStartBar  = na
-var float bullStartPrice = na
-var int   bullLastBar   = na
-var float bullLastPrice = na
+var array<int>   bullChainBars   = array.new<int>()
+var array<float> bullChainPrices = array.new<float>()
+var array<int>   bearChainBars   = array.new<int>()
+var array<float> bearChainPrices = array.new<float>()
 
-var line  bearLine      = na
-var bool  trackingBear  = false
-var int   bearStartBar  = na
-var float bearStartPrice = na
-var int   bearLastBar   = na
-var float bearLastPrice = na
+var polyline bullPoly     = na
+var polyline bearPoly     = na
+var bool     trackingBull = false
+var bool     trackingBear = false
 
 bullBreak = false
 bearBreak = false
+bullChainChanged = false
+bearChainChanged = false
 
 if bullishBreakNow
+    freshBullStart = not hadBullishBreak
     breakLastHigh   := close
     hadBullishBreak := true
     hadBearishBreak := false
     if showDebug
         label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    if freshBullStart
+        array.clear(bullChainBars)
+        array.clear(bullChainPrices)
+        if not na(pivotLowVal)
+            array.push(bullChainBars, pivotBarIdx)
+            array.push(bullChainPrices, pivotLowVal)
+            bullChainChanged := true
     // A fresh bullish break invalidates any bearish line still being
     // tracked -- the downtrend it was measuring no longer holds.
-    if trackingBear and not na(bearLine)
+    if trackingBear
         bearBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
-        line.delete(bearLine)
-        bearLine     := na
+        if not na(bearPoly)
+            polyline.delete(bearPoly)
+            bearPoly := na
         trackingBear := false
 
 if bearishBreakNow
+    freshBearStart = not hadBearishBreak
     breakLastLow    := close
     hadBearishBreak := true
     hadBullishBreak := false
     if showDebug
         label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+    if freshBearStart
+        array.clear(bearChainBars)
+        array.clear(bearChainPrices)
+        if not na(pivotHighVal)
+            array.push(bearChainBars, pivotBarIdx)
+            array.push(bearChainPrices, pivotHighVal)
+            bearChainChanged := true
     // A fresh bearish break invalidates any bullish line still being
     // tracked -- the uptrend it was measuring no longer holds.
-    if trackingBull and not na(bullLine)
+    if trackingBull
         bullBreak := true
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
-        line.delete(bullLine)
-        bullLine     := na
+        if not na(bullPoly)
+            polyline.delete(bullPoly)
+            bullPoly := na
         trackingBull := false
+
+// Collect additional swing points into the active chain as the trend
+// continues, skipping any that don't extend the structure (a lower low
+// during an uptrend's chain, or a higher high during a downtrend's chain).
+if hadBullishBreak and not na(pivotLowVal)
+    if array.size(bullChainPrices) == 0 or pivotLowVal > array.get(bullChainPrices, array.size(bullChainPrices) - 1)
+        array.push(bullChainBars, pivotBarIdx)
+        array.push(bullChainPrices, pivotLowVal)
+        bullChainChanged := true
+        if showDebug
+            label.new(pivotBarIdx, pivotLowVal, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+
+if hadBearishBreak and not na(pivotHighVal)
+    if array.size(bearChainPrices) == 0 or pivotHighVal < array.get(bearChainPrices, array.size(bearChainPrices) - 1)
+        array.push(bearChainBars, pivotBarIdx)
+        array.push(bearChainPrices, pivotHighVal)
+        bearChainChanged := true
+        if showDebug
+            label.new(pivotBarIdx, pivotHighVal, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)
@@ -164,63 +165,34 @@ bullTrigger = hadBullishBreak and rsiMa > overbought and not bullArmed
 bearTrigger = hadBearishBreak and rsiMa < oversold and not bearArmed
 
 if bullTrigger
-    bullArmed := true
+    bullArmed    := true
+    trackingBull := true
+    if showLabels
+        label.new(bar_index, low, text="OVEREXTENDED", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
+
 if bearTrigger
-    bearArmed := true
-
-if bullTrigger and not na(swingLowBar1) and not na(swingLowBar2)
-    if not na(bullLine)
-        line.delete(bullLine)
-    bullStartBar   := swingLowBar1
-    bullStartPrice := swingLow1
-    bullLastBar    := swingLowBar2
-    bullLastPrice  := swingLow2
-    bullLine       := line.new(bullStartBar, bullStartPrice, bullLastBar, bullLastPrice, extend=extend.none, color=bullColor, width=2)
-    trackingBull   := true
+    bearArmed    := true
+    trackingBear := true
     if showLabels
-        label.new(bar_index, low, text="OVEREXTENDED x1=" + str.tostring(bullStartBar) + " x2=" + str.tostring(bullLastBar) + " y1=" + str.tostring(bullStartPrice, format.mintick) + " y2=" + str.tostring(bullLastPrice, format.mintick), style=label.style_label_up, color=color.new(bullColor, 70), textcolor=color.white, size=size.small)
-    if showDebug
-        label.new(bullStartBar, bullStartPrice, text="P1", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
-        label.new(bullLastBar, bullLastPrice, text="P2", style=label.style_square, color=color.new(bullColor, 30), size=size.tiny)
+        label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
-if bearTrigger and not na(swingHighBar1) and not na(swingHighBar2)
-    if not na(bearLine)
-        line.delete(bearLine)
-    bearStartBar   := swingHighBar1
-    bearStartPrice := swingHigh1
-    bearLastBar    := swingHighBar2
-    bearLastPrice  := swingHigh2
-    bearLine       := line.new(bearStartBar, bearStartPrice, bearLastBar, bearLastPrice, extend=extend.none, color=bearColor, width=2)
-    trackingBear   := true
-    if showLabels
-        label.new(bar_index, high, text="UNDEREXTENDED x1=" + str.tostring(bearStartBar) + " x2=" + str.tostring(bearLastBar) + " y1=" + str.tostring(bearStartPrice, format.mintick) + " y2=" + str.tostring(bearLastPrice, format.mintick), style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
-    if showDebug
-        label.new(bearStartBar, bearStartPrice, text="P1", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
-        label.new(bearLastBar, bearLastPrice, text="P2", style=label.style_square, color=color.new(bearColor, 30), size=size.tiny)
+// (Re)draw the polyline whenever it's actively being tracked and either
+// just started or just grew a new point.
+if trackingBull and (bullTrigger or bullChainChanged) and array.size(bullChainBars) >= 2
+    if not na(bullPoly)
+        polyline.delete(bullPoly)
+    bullPts = array.new<chart.point>()
+    for i = 0 to array.size(bullChainBars) - 1
+        array.push(bullPts, chart.point.from_index(array.get(bullChainBars, i), array.get(bullChainPrices, i)))
+    bullPoly := polyline.new(bullPts, curved=false, closed=false, line_color=bullColor, line_width=2)
 
-// ---------------------------------------------------------------------------
-// While still tracking, keep the line's right edge pinned to the current
-// bar every bar (extend=extend.none, manually advanced) rather than using
-// extend.right's automatic slope projection. TradingView excludes
-// infinitely-extending lines from its auto-scale calculation, so once
-// that projection ran far enough past the anchor, the line rendered
-// completely outside the visible/auto-scaled price range -- it was being
-// drawn, just nowhere the chart was looking. Re-pivoting to each new
-// confirming swing point still happens, just without ever extrapolating
-// past the latest known price. No price-based break check here --
-// invalidation is handled above via the opposite structure break.
-// ---------------------------------------------------------------------------
-if trackingBull and not na(bullLine)
-    if not na(pivotLowVal) and pivotLowVal > bullLastPrice
-        bullLastPrice := pivotLowVal
-    bullLastBar := bar_index
-    line.set_xy2(bullLine, bullLastBar, bullLastPrice)
-
-if trackingBear and not na(bearLine)
-    if not na(pivotHighVal) and pivotHighVal < bearLastPrice
-        bearLastPrice := pivotHighVal
-    bearLastBar := bar_index
-    line.set_xy2(bearLine, bearLastBar, bearLastPrice)
+if trackingBear and (bearTrigger or bearChainChanged) and array.size(bearChainBars) >= 2
+    if not na(bearPoly)
+        polyline.delete(bearPoly)
+    bearPts = array.new<chart.point>()
+    for i = 0 to array.size(bearChainBars) - 1
+        array.push(bearPts, chart.point.from_index(array.get(bearChainBars, i), array.get(bearChainPrices, i)))
+    bearPoly := polyline.new(bearPts, curved=false, closed=false, line_color=bearColor, line_width=2)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
