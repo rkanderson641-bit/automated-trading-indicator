@@ -182,36 +182,6 @@ if bearTrigger
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
-// A straight line between a far-apart origin and the eventual extreme
-// inevitably cuts through any bounce that happened in between -- real
-// price rarely moves in one constant-slope diagonal. If price actually
-// closes back through the CURRENT line's own projected value (a genuine
-// violation, not just a distance threshold), that specific line is no
-// longer valid: freeze it exactly as drawn (left on the chart, same
-// origin reused for the next one) and start a fresh line from the SAME
-// origin with its far point reset to right now, tracking a new running
-// extreme from this point forward. This produces a sequence of
-// progressively shallower lines fanning from one fixed origin as a
-// multi-leg move develops, rather than one rigid diagonal spanning the
-// whole leg.
-if trackingBull and not na(bullOriginBar) and bullFarBar != bullOriginBar
-    bullSlopeChk = (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar)
-    bullProjected = bullOriginPrice + bullSlopeChk * (bar_index - bullOriginBar)
-    if close < bullProjected
-        bullLine    := na
-        bullCapLine := na
-        bullFarBar   := bar_index
-        bullFarPrice := low
-
-if trackingBear and not na(bearOriginBar) and bearFarBar != bearOriginBar
-    bearSlopeChk = (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar)
-    bearProjected = bearOriginPrice + bearSlopeChk * (bar_index - bearOriginBar)
-    if close > bearProjected
-        bearLine    := na
-        bearCapLine := na
-        bearFarBar   := bar_index
-        bearFarPrice := high
-
 // Draw/update the line for as long as it's being tracked -- the origin
 // never moves; the far point continuously follows the running extreme
 // computed above. extendBars adds a small overshoot past the far point,

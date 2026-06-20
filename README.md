@@ -170,23 +170,20 @@ already-overextended trend:
   fires even when the swing-confirmation lag means the trend structure
   confirms a few bars after RSI actually crossed the threshold.
 - If price stops making new extremes, the line simply stays put at the
-  last one. A straight line between a far-apart origin and the eventual
-  extreme inevitably cuts through any bounce that happened in between,
-  though, since real price rarely moves in one constant-slope diagonal —
-  so if price actually closes back through the CURRENT line's own
-  projected value (a genuine violation, not just a distance threshold),
-  that line freezes exactly as drawn (left on the chart) and a fresh line
-  starts from the SAME origin with its far point reset to track a new
-  running extreme from that point forward. This produces a sequence of
-  progressively shallower lines fanning from one fixed origin as a
-  multi-leg move develops, rather than one rigid diagonal spanning the
-  whole leg and visually cutting through any bounce candles in between.
-- Only a genuine opposite structure break ends a leg entirely, at which
-  point the current line freezes permanently exactly as drawn and stays
-  on the chart as a record of that completed leg — lines are never
-  deleted, so the full history of overextended/underextended trend lines
-  for the day remains visible. The break is flagged with its own label
-  and `alertcondition()`.
+  last one — it does not need a separate "divergence" mechanism, since
+  there's nothing to fall behind: the far point IS the actual running
+  extreme. A "re-anchor on violation" mechanism (freezing the line and
+  starting a fresh one from the same origin whenever price closed back
+  through its own projection, to avoid a single straight line cutting
+  through an intermediate bounce) was tried but removed — comparing
+  against a slope built from a recent, narrow origin-to-extreme span
+  triggered "violations" almost immediately after nearly every new
+  extreme, producing a runaway fan of one-bar lines. Only a genuine
+  opposite structure break ends a leg, at which point the current line
+  freezes permanently exactly as drawn and stays on the chart as a record
+  of that completed leg — lines are never deleted, so the full history of
+  overextended/underextended trend lines for the day remains visible. The
+  break is flagged with its own label and `alertcondition()`.
 - The line's far point also gets a small overshoot
   (`Extend each line past its last point`, default 8 bars) projected
   along the line's own slope, so it doesn't stop dead exactly at the last
