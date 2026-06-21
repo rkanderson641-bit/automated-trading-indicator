@@ -187,8 +187,16 @@ already-overextended trend:
   frozen in place, left on the chart permanently, never deleted — once
   price actually closes back through the line itself by more than the
   break margin (`Minimum break size`, the same ATR multiple used for the
-  overall structure-break check). The break is flagged with its own label
-  and `alertcondition()`. Once frozen, the line gets a final small
+  overall structure-break check), plus a slope-proportional buffer (the
+  line's own slope x the swing lookback). A pivot only confirms several
+  bars after it actually happened, so a freshly updated anchor is always
+  that many bars "stale" versus the current bar; for a shallow line the
+  resulting projection gap is negligible, but a steep line (most often
+  right after a divergence restart) could swing the projection enough
+  over those bars alone to look broken immediately, before price ever
+  really tested it — the buffer accounts for exactly that gap. The break
+  is flagged with its own label and `alertcondition()`. Once frozen, the
+  line gets a final small
   overshoot (`Extend a frozen line past its break point`, default 6 bars)
   projected along its own slope, so the finished line is easy to see
   instead of stopping dead exactly at the break.

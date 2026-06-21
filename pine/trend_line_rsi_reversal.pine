@@ -246,7 +246,14 @@ if bearTrigger
 if trackingBull and not na(bullOriginBar)
     bullSlope        = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
     bullProjectedNow = bullFarPrice + bullSlope * (bar_index - bullFarBar)
-    if close < bullProjectedNow - atrVal * minBreakAtrMult
+    // A pivot only confirms swingBars after it actually happened, so a
+    // freshly updated far point is always swingBars bars "stale" versus
+    // bar_index. For a shallow line that's negligible, but a steep
+    // (e.g. just-diverged) line can swing the projection by a lot over
+    // those swingBars bars alone -- add a slope-proportional buffer so a
+    // steep line isn't judged broken by an artifact of its own lag.
+    bullBreakMargin  = atrVal * minBreakAtrMult + math.abs(bullSlope) * swingBars
+    if close < bullProjectedNow - bullBreakMargin
         // Extend a touch past the actual break point before freezing, so
         // the finished line reads clearly instead of stopping dead.
         if not na(bullLine) and freezeExtendBars > 0
@@ -269,7 +276,8 @@ if trackingBull and not na(bullOriginBar)
 if trackingBear and not na(bearOriginBar)
     bearSlope        = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
     bearProjectedNow = bearFarPrice + bearSlope * (bar_index - bearFarBar)
-    if close > bearProjectedNow + atrVal * minBreakAtrMult
+    bearBreakMargin  = atrVal * minBreakAtrMult + math.abs(bearSlope) * swingBars
+    if close > bearProjectedNow + bearBreakMargin
         if not na(bearLine) and freezeExtendBars > 0
             line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
         trackingBear    := false
