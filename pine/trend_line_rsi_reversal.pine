@@ -117,6 +117,11 @@ if bullishBreakNow
         // on the chart as permanent history of that completed leg.
         bullLine    := na
         bullCapLine := na
+        // Marks the EXACT (bar, price) used as the origin -- if this dot
+        // doesn't sit precisely on the candle's lower wick, the anchor
+        // value itself (not just the line) is wrong.
+        if showDebug
+            label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     // A fresh bullish break means the downtrend it was tracking no
     // longer holds. The bearish line itself is left in place on the chart.
     if trackingBear
@@ -139,6 +144,11 @@ if bearishBreakNow
         bearFarPrice    := bearOriginPrice
         bearLine    := na
         bearCapLine := na
+        // Marks the EXACT (bar, price) used as the origin -- if this dot
+        // doesn't sit precisely on the candle's upper wick, the anchor
+        // value itself (not just the line) is wrong.
+        if showDebug
+            label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     // A fresh bearish break means the uptrend it was tracking no longer
     // holds. The bullish line itself is left in place on the chart.
     if trackingBull
@@ -166,6 +176,8 @@ if hadBullishBreak and not na(pivotLowVal)
     bullOriginPrice := pivotLowVal
     bullFarBar      := bullOriginBar
     bullFarPrice    := bullOriginPrice
+    if showDebug
+        label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 if hadBearishBreak and not na(pivotHighVal)
     bearLine    := na
@@ -174,6 +186,8 @@ if hadBearishBreak and not na(pivotHighVal)
     bearOriginPrice := pivotHighVal
     bearFarBar      := bearOriginBar
     bearFarPrice    := bearOriginPrice
+    if showDebug
+        label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 // Continuously track the running extreme since the CURRENT leg's origin
 // -- a real wick value updated every bar, never waiting on pivot
