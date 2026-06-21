@@ -172,13 +172,16 @@ already-overextended trend:
   short, often invisible pieces instead of running continuously across
   the trend.)
 - A pivot that DOES continue the structure, but lands beyond where the
-  established line itself already projects to that bar (a lower high
-  that's lower than the line predicts, a higher low that's higher than
-  the line predicts), means the trend has gotten steeper — diverged from
-  the existing line. The existing line freezes exactly at its last point
-  (left on the chart) and a brand new, steeper line begins from that same
-  point, extended out to this new pivot, following the same rules from
-  there on.
+  established line itself already projects to that bar by more than a
+  small ATR margin (`Divergence sensitivity margin`, default 0.5x ATR) —
+  a lower high meaningfully lower than the line predicts, a higher low
+  meaningfully higher than the line predicts — means the trend has gotten
+  steeper, diverging from the existing line. The existing line freezes
+  exactly at its last point (left on the chart) and a brand new, steeper
+  line begins from that same point, extended out to this new pivot,
+  following the same rules from there on. The ATR margin keeps ordinary
+  pivot-to-pivot noise from constantly restarting the line over a trivial
+  overshoot.
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
   or below oversold during a confirmed downtrend = "underextended") —

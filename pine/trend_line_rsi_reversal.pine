@@ -7,6 +7,7 @@ indicator("Trend Line RSI Reversal", overlay=true, max_lines_count=500, max_labe
 swingBars       = input.int(8, "Swing Lookback/Lookahead Bars", minval=1, group="Trend Structure")
 atrLen          = input.int(14, "ATR Length", minval=1, group="Trend Structure")
 minBreakAtrMult = input.float(1.0, "Minimum break size (x ATR)", minval=0.1, step=0.1, group="Trend Structure")
+divergeAtrMult  = input.float(0.5, "Divergence sensitivity margin (x ATR)", minval=0.0, step=0.1, group="Trend Structure")
 rsiLen          = input.int(14, "RSI Length", minval=1, group="RSI")
 rsiMaLen        = input.int(9, "RSI MA Length", minval=1, group="RSI")
 overbought      = input.float(70, "Overbought (overextended)", group="RSI")
@@ -35,13 +36,15 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // (left on the chart) -- lines are never deleted.
 //
 // A pivot that DOES continue the structure, but lands beyond where the
-// established line itself already projects to that bar (a lower high
-// that's lower than the line predicts, a higher low that's higher than the
-// line predicts), means the trend has gotten steeper -- it has diverged
-// from the existing line. When that happens the existing line freezes
-// exactly at its last point (left on the chart) and a brand new, steeper
-// line begins from that same point, extended out to this new pivot,
-// following the same rules from there on.
+// established line itself already projects to that bar by more than a
+// small ATR margin (a lower high meaningfully lower than the line
+// predicts, a higher low meaningfully higher than the line predicts),
+// means the trend has gotten steeper -- it has diverged from the existing
+// line. When that happens the existing line freezes exactly at its last
+// point (left on the chart) and a brand new, steeper line begins from
+// that same point, extended out to this new pivot, following the same
+// rules from there on. The ATR margin keeps ordinary pivot-to-pivot noise
+// from constantly restarting the line over trivial overshoot.
 //
 // An earlier version's far point tracked the running lowest low (for a
 // bearish line) / highest high (for a bullish line) every bar, which was
@@ -181,7 +184,7 @@ if hadBullishBreak and not na(pivotLowVal)
     else if pivotLowVal > bullFarPrice
         bullEstSlope  = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
         bullProjected = bullFarPrice + bullEstSlope * (pivotBarIdx - bullFarBar)
-        if bullFarBar != bullOriginBar and pivotLowVal > bullProjected
+        if bullFarBar != bullOriginBar and pivotLowVal > bullProjected + atrVal * divergeAtrMult
             bullLine    := na
             bullCapLine := na
             bullOriginBar   := bullFarBar
@@ -210,7 +213,7 @@ if hadBearishBreak and not na(pivotHighVal)
     else if pivotHighVal < bearFarPrice
         bearEstSlope  = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
         bearProjected = bearFarPrice + bearEstSlope * (pivotBarIdx - bearFarBar)
-        if bearFarBar != bearOriginBar and pivotHighVal < bearProjected
+        if bearFarBar != bearOriginBar and pivotHighVal < bearProjected - atrVal * divergeAtrMult
             bearLine    := na
             bearCapLine := na
             bearOriginBar   := bearFarBar
