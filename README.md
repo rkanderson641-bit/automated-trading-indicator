@@ -146,73 +146,100 @@ Each group has its own visibility toggle and color inputs.
 
 A standalone trend-line indicator for spotting reversal points on an
 already-overextended trend:
-- Trend direction uses a structure-break definition (same as
+- Trend **direction** uses a structure-break definition (same as
   `reversal_confluence.pine`): a close beyond the most recent prior swing
-  high/low confirms a bullish/bearish trend immediately, without waiting
-  for a pullback to form a second confirming pivot. This is used only to
-  pick which pivot type to anchor on and to gate RSI-trigger eligibility
-  — never to end an already-active line (see below).
+  high/low (`Swing Lookback/Lookahead Bars`, default 8) confirms a
+  bullish/bearish trend immediately, without waiting for a pullback to
+  form a second confirming pivot. This picks which pivot type to anchor
+  on and gates RSI-trigger eligibility — never used to end an
+  already-active line (see below).
 - A bearish trend line connects swing HIGHS only — never a high to a low.
   A bullish trend line connects swing LOWS only. Both points of a given
   line are always the same type of pivot, exactly like a hand-drawn
   descending-resistance or ascending-support line: origin = the highest
   high that started a downtrend leg / lowest low that started an uptrend
   leg, far point = the lowest high / highest low reached so far.
-- The far point rolls forward to each NEW confirmed same-type pivot that
-  CONTINUES the structure (a lower high while bearish, a higher low while
-  bullish). A pivot that fails to continue (equal/higher high while
-  bearish, equal/lower low while bullish) is simply not a touch point —
-  it's ignored and the anchor stays exactly as it was.
-- A pivot that DOES continue the structure, but lands beyond where the
-  established line itself already projects to that bar by more than a
+- The far point's **touch points** use a separate, smaller lookback
+  (`Touch Point Lookback/Lookahead Bars`, default 3) from the direction
+  check above. A single wide lookback for both was too strict for minor
+  bounces during a fast or choppy move — a real lower-high/higher-low
+  could go an entire leg without ever satisfying a wider symmetric
+  confirmation window, leaving the far point stuck at the origin (a
+  perfectly flat line) even though the candles clearly showed descending
+  highs/ascending lows the whole way.
+- The far point rolls forward to each new confirmed same-type touch point
+  that CONTINUES the structure (a lower high while bearish, a higher low
+  while bullish). A touch point that fails to continue is simply not used
+  — it's ignored and the anchor stays exactly as it was.
+- A touch point that DOES continue the structure, but lands beyond where
+  the established line itself already projects to that bar by more than a
   small ATR margin (`Divergence sensitivity margin`, default 0.5x ATR) —
   a lower high meaningfully lower than the line predicts, a higher low
   meaningfully higher than the line predicts — means the trend has gotten
-  steeper, diverging from the existing line. The existing line freezes
-  exactly at its last point (left on the chart) and a brand new, steeper
-  line begins from that same point, extended out to this new pivot,
-  following the same rules from there on.
+  steeper, diverging from the existing line, UNLESS the resulting line
+  would cut into the open/close body of a candle in between the two
+  points (touching a wick is fine, cutting into a body is not) — in that
+  case the touch point is treated as a normal continuation instead, and
+  the branch is deferred until a touch point comes along where the
+  geometry actually works. Otherwise, the existing line freezes exactly at
+  its last point (left on the chart) and a brand new, steeper line begins
+  from that same point, extended out to this new touch point, following
+  the same rules from there on — drawn in a separate, lighter color
+  (`Bullish/Bearish Divergent Line Color`) so divergent branches are easy
+  to tell apart from the original line. A trend can branch into more than
+  one successive divergent line as price keeps over/underextending — that
+  part is expected, not an error.
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
   or below oversold during a confirmed downtrend = "underextended"), using
-  whichever leg's origin and far point are current at that moment. The
-  overextended/underextended check uses a level-based "armed" latch rather
-  than a same-bar crossover, so it still fires even when the swing-
-  confirmation lag means the trend structure confirms a few bars after RSI
-  actually crossed the threshold.
+  whichever leg's origin and far point are current at that moment. RSI's
+  moving average is a smoothed, lagging value, so it can cross into
+  overbought/oversold a few bars *after* the underlying trend direction
+  has already reversed — a strict "direction is live right now AND RSI is
+  past threshold on this exact bar" check would silently miss a real
+  overextension just because the two conditions never lined up on the same
+  bar. A short grace window (the RSI MA length, after the trend direction
+  flips) lets a pending RSI confirmation still fire using the anchor as it
+  stood when that trend ended.
 - Once drawn, the line behaves exactly like `auto_support_resistance.pine`'s
   level lines: every bar it extends forward to the current bar along its
   own established slope, instead of sitting frozen at its last confirmed
-  touch point until the next pivot happens to arrive. It only stops —
+  touch point until the next one happens to arrive. It only stops —
   frozen in place, left on the chart permanently, never deleted — once
   price actually closes back through the line itself by more than the
   break margin (`Minimum break size`, the same ATR multiple used for the
   overall structure-break check), plus a slope-proportional buffer (the
-  line's own slope x the swing lookback). A pivot only confirms several
-  bars after it actually happened, so a freshly updated anchor is always
-  that many bars "stale" versus the current bar; for a shallow line the
-  resulting projection gap is negligible, but a steep line (most often
-  right after a divergence restart) could swing the projection enough
-  over those bars alone to look broken immediately, before price ever
-  really tested it — the buffer accounts for exactly that gap. The break
-  is flagged with its own label and `alertcondition()`. Once frozen, the
-  line gets a final small
-  overshoot (`Extend a frozen line past its break point`, default 6 bars)
-  projected along its own slope, so the finished line is easy to see
-  instead of stopping dead exactly at the break.
+  line's own slope x the touch-point lookback). A touch point only
+  confirms several bars after it actually happened, so a freshly updated
+  anchor is always that many bars "stale" versus the current bar; for a
+  shallow line the resulting projection gap is negligible, but a steep
+  line (most often right after a divergence restart) could swing the
+  projection enough over those bars alone to look broken immediately,
+  before price ever really tested it — the buffer accounts for exactly
+  that gap. The break is flagged with its own label and
+  `alertcondition()`. Once frozen, the line gets a final small overshoot
+  (`Extend a frozen line past its break point`, default 6 bars) projected
+  along its own slope, so the finished line is easy to see instead of
+  stopping dead exactly at the break.
 - A debug table (bottom-right, toggled by `Show debug markers`) prints the
   exact origin/far bar+price and resulting slope for whichever line(s) are
-  currently tracking, to verify anchor placement precisely rather than by
+  currently tracking — including a `[D]` tag when the current segment is a
+  divergent branch — to verify anchor placement precisely rather than by
   eye.
-- An earlier version only moved a line's far edge when a new pivot
-  confirmed, which left the line sitting frozen — looking stopped — for
-  the entire stretch between pivots even while the trend it represented
-  was still clearly active; that's why it kept appearing to stop short of
-  where price obviously continued the trend. A version before that
-  discarded the whole line over any single pivot that merely failed to
-  extend it, fragmenting long trends into short, often invisible pieces.
-  An even earlier version connected a high to a low instead of two points
-  of the same type.
+- Earlier versions got this wrong in a few ways: connecting a high to a
+  low instead of two points of the same type; discarding the whole line
+  over any single pivot that merely failed to extend it, fragmenting long
+  trends into short, often invisible pieces; only redrawing the line's far
+  edge when a new pivot confirmed, leaving it sitting frozen (looking
+  stopped) for the entire stretch between pivots even while the trend was
+  still clearly active; a single, fairly wide pivot lookback shared
+  between trend direction and touch points, which was too strict to catch
+  real touch points during fast or choppy moves; an exact same-bar AND
+  between live trend direction and live RSI threshold, which missed real
+  overextensions whenever RSI's lag meant the two conditions were never
+  true on the same bar; and divergent branches connected by a straight
+  line with no check for whether that line cut through an intervening
+  candle's body.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
