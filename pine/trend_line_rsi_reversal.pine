@@ -18,19 +18,27 @@ extendBars      = input.int(8, "Extend each line past its last point (bars)", mi
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
-// Each leg of a trend gets its own line: an origin anchored to the swing
-// low (uptrend) or swing high (downtrend) that started THAT leg, and a
-// far point that continuously tracks the running extreme since then using
-// each bar's own real wick (no pivot-confirmation lag). Every time a NEW
-// swing pivot confirms in the trend's direction (a fresh lower high while
-// bearish, a fresh higher low while bullish), the line in progress freezes
-// permanently exactly where it had reached, and a brand new line begins
-// anchored to that new pivot -- because a single line stretching from the
-// very first origin to the eventual absolute extreme would inevitably cut
-// through any bounce in between (real price doesn't move in one
-// constant-slope diagonal across multiple distinct legs). A genuine
-// opposite structure break ends the whole trend, freezing whichever line
-// was active at that point the same way.
+// A bearish trend line connects swing HIGHS only -- never a high to a low.
+// A bullish trend line connects swing LOWS only. Both points of a given
+// line are always the same type of pivot, exactly like a hand-drawn
+// descending-resistance or ascending-support line.
+//
+// The line starts at an origin pivot (the swing high/low that began the
+// leg) and its far point rolls forward to each NEW confirmed same-type
+// pivot, as long as that new pivot continues the structure (a lower high
+// while bearish, a higher low while bullish). If a new pivot instead
+// BREAKS that structure (a higher high than the line's current far point
+// while bearish, a lower low while bullish), the line in progress is no
+// longer valid: it freezes exactly where it had reached (left on the
+// chart) and a brand new line starts, anchored to that breaking pivot as
+// its fresh origin. A genuine opposite structure break ends the whole
+// trend, freezing whichever line was active the same way.
+//
+// An earlier version's far point tracked the running lowest low (for a
+// bearish line) / highest high (for a bullish line) every bar, which was
+// simply wrong -- it connected a high to a low, the opposite of what a
+// trend line actually is. It also never waited for pivot confirmation,
+// so it could never produce the right shape regardless.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -57,16 +65,10 @@ var bool  hadBullishBreak = false
 var bool  hadBearishBreak = false
 
 // breakLastHigh/breakLastLow always ratchet to the most recent confirmed
-// pivot, regardless of current trend state. An earlier attempt froze the
-// OPPOSITE-direction level once a trend was confirmed, on the theory that
-// a reversal-direction line appearing mid-trend was a bug -- but a close
-// back above the most recent lower-high pivot (or below the most recent
-// higher-low) IS a legitimate micro-reversal/bounce, which is exactly
-// what this indicator is meant to catch, even within a larger trend.
-// Freezing the level meant a reversal had to clear the price level from
-// before the ENTIRE prior trend even started -- an almost unreachable
-// bar after any real move -- so breaks (and therefore lines) almost
-// stopped firing at all.
+// pivot, regardless of current trend state. A close back above the most
+// recent lower-high pivot (or below the most recent higher-low) is a
+// legitimate micro-reversal/bounce -- exactly what this indicator is
+// meant to catch, even within a larger trend.
 if not na(pivotHighVal)
     breakLastHigh := pivotHighVal
 if not na(pivotLowVal)
@@ -117,9 +119,6 @@ if bullishBreakNow
         // on the chart as permanent history of that completed leg.
         bullLine    := na
         bullCapLine := na
-        // Marks the EXACT (bar, price) used as the origin -- if this dot
-        // doesn't sit precisely on the candle's lower wick, the anchor
-        // value itself (not just the line) is wrong.
         if showDebug
             label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     // A fresh bullish break means the downtrend it was tracking no
@@ -144,9 +143,6 @@ if bearishBreakNow
         bearFarPrice    := bearOriginPrice
         bearLine    := na
         bearCapLine := na
-        // Marks the EXACT (bar, price) used as the origin -- if this dot
-        // doesn't sit precisely on the candle's upper wick, the anchor
-        // value itself (not just the line) is wrong.
         if showDebug
             label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     // A fresh bearish break means the uptrend it was tracking no longer
@@ -157,48 +153,43 @@ if bearishBreakNow
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
         trackingBull := false
 
-// Each time a NEW swing pivot confirms in the trend's direction (a fresh,
-// lower swing high while bearish; a fresh, higher swing low while
-// bullish), that's the start of a genuinely new leg of the move -- the
-// old line is frozen permanently exactly where it had reached (left on
-// the chart) and a brand new line begins, anchored to THIS new pivot as
-// its origin, with its far point reset to track forward from here. A
-// single straight line stretching from the very first origin to the
-// eventual absolute extreme inevitably cut through any bounce in
-// between, since real price doesn't move in one constant-slope diagonal
-// across multiple distinct legs -- this instead produces one separate
-// line per leg, each anchored to the actual swing high/low that started
-// it, matching how a trend line is drawn by hand leg by leg.
+// Roll the far point forward on each new SAME-TYPE pivot that continues
+// the structure (a lower high while bearish, a higher low while bullish).
+// A new pivot that instead BREAKS the structure (higher than the current
+// far point while bearish, lower while bullish) means the line in
+// progress is no longer valid -- freeze it (left on the chart) and start
+// a fresh line anchored to that breaking pivot.
 if hadBullishBreak and not na(pivotLowVal)
-    bullLine    := na
-    bullCapLine := na
-    bullOriginBar   := pivotBarIdx
-    bullOriginPrice := pivotLowVal
-    bullFarBar      := bullOriginBar
-    bullFarPrice    := bullOriginPrice
-    if showDebug
-        label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+    if not na(bullOriginBar) and (na(bullFarPrice) or pivotLowVal > bullFarPrice)
+        bullFarBar   := pivotBarIdx
+        bullFarPrice := pivotLowVal
+        if showDebug
+            label.new(bullFarBar, bullFarPrice, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+    else
+        bullLine    := na
+        bullCapLine := na
+        bullOriginBar   := pivotBarIdx
+        bullOriginPrice := pivotLowVal
+        bullFarBar      := bullOriginBar
+        bullFarPrice    := bullOriginPrice
+        if showDebug
+            label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 if hadBearishBreak and not na(pivotHighVal)
-    bearLine    := na
-    bearCapLine := na
-    bearOriginBar   := pivotBarIdx
-    bearOriginPrice := pivotHighVal
-    bearFarBar      := bearOriginBar
-    bearFarPrice    := bearOriginPrice
-    if showDebug
-        label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-
-// Continuously track the running extreme since the CURRENT leg's origin
-// -- a real wick value updated every bar, never waiting on pivot
-// confirmation, so the line never falls behind price.
-if hadBullishBreak and not na(bullOriginBar) and high > bullFarPrice
-    bullFarBar   := bar_index
-    bullFarPrice := high
-
-if hadBearishBreak and not na(bearOriginBar) and low < bearFarPrice
-    bearFarBar   := bar_index
-    bearFarPrice := low
+    if not na(bearOriginBar) and (na(bearFarPrice) or pivotHighVal < bearFarPrice)
+        bearFarBar   := pivotBarIdx
+        bearFarPrice := pivotHighVal
+        if showDebug
+            label.new(bearFarBar, bearFarPrice, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+    else
+        bearLine    := na
+        bearCapLine := na
+        bearOriginBar   := pivotBarIdx
+        bearOriginPrice := pivotHighVal
+        bearFarBar      := bearOriginBar
+        bearFarPrice    := bearOriginPrice
+        if showDebug
+            label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)
@@ -229,17 +220,17 @@ if bearTrigger
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
 // Draw/update the line for as long as it's being tracked -- the origin
-// never moves; the far point continuously follows the running extreme
-// computed above. extendBars adds a small overshoot past the far point,
-// projected along the line's own slope, so it doesn't stop dead exactly
-// at the last touch.
+// only moves when the structure breaks (handled above); the far point
+// rolls forward to each new confirming same-type pivot. extendBars adds a
+// small overshoot past the far point, projected along the line's own
+// slope, so it doesn't stop dead exactly at the last touch.
 if trackingBull and not na(bullOriginBar)
     if na(bullLine)
         bullLine := line.new(bullOriginBar, bullOriginPrice, bullFarBar, bullFarPrice, extend=extend.none, color=bullColor, width=2)
     else
         line.set_xy2(bullLine, bullFarBar, bullFarPrice)
     // Only when the far point has actually moved past the origin -- right
-    // when a leg starts, before any new high has printed, they're still
+    // when a leg starts, before any new low has confirmed, they're still
     // the same point and a slope is undefined (division by zero).
     if extendBars > 0 and bullFarBar != bullOriginBar
         if not na(bullCapLine)

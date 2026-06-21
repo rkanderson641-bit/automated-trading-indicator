@@ -150,40 +150,31 @@ already-overextended trend:
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
   for a pullback to form a second confirming pivot.
-- Each LEG of a trend gets its own line — an origin anchored to the swing
-  low (uptrend) or swing high (downtrend) that started that specific leg,
-  and a far point that continuously tracks the running extreme (the
-  highest high so far for an uptrend, the lowest low so far for a
-  downtrend) using each bar's own real wick. Neither point is ever a
-  synthetic value like the current bar's close, which can land inside a
-  candle's body and make the line cut through printed candles instead of
-  touching their corners/wicks. The far point updates every single bar a
-  new extreme prints, with no pivot-confirmation lag, so the line never
-  falls behind price.
-- Every time a NEW swing pivot confirms in the trend's direction (a fresh
-  lower high while bearish, a fresh higher low while bullish), the line in
-  progress freezes permanently exactly where it had reached — left on the
-  chart — and a brand new line begins anchored to THAT new pivot as its
-  origin. A single line stretching from the very first origin all the way
-  to the eventual absolute extreme inevitably cut through any bounce in
-  between, since real price doesn't move in one constant-slope diagonal
-  across multiple distinct legs; one separate line per leg, each anchored
-  to the actual swing point that started it, matches how a trend line is
-  drawn by hand leg by leg. (A "re-anchor on violation" approach — freezing
-  and restarting only when price closed back through the line's own
-  projection — was tried first but removed: a slope built from a recent,
-  narrow origin-to-extreme span triggered "violations" almost immediately
-  after nearly every new extreme, producing a runaway fan of one-bar
-  lines instead.)
+- A bearish trend line connects swing HIGHS only — never a high to a low.
+  A bullish trend line connects swing LOWS only. Both points of a given
+  line are always the same type of pivot, exactly like a hand-drawn
+  descending-resistance or ascending-support line. (An earlier version's
+  far point tracked the running lowest low for a bearish line / highest
+  high for a bullish line, every bar — which was simply wrong, connecting
+  a high to a low instead of two points of the same type.)
+- The line starts at an origin pivot (the swing high/low that began the
+  leg) and its far point rolls forward to each NEW confirmed same-type
+  pivot, as long as that new pivot continues the structure (a lower high
+  while bearish, a higher low while bullish). If a new pivot instead
+  BREAKS that structure (a higher high than the line's current far point
+  while bearish, a lower low while bullish), the line in progress is no
+  longer valid: it freezes exactly where it had reached — left on the
+  chart — and a brand new line starts, anchored to that breaking pivot as
+  its fresh origin.
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
   or below oversold during a confirmed downtrend = "underextended") —
-  using whichever leg's origin and running extreme are current at that
-  moment, so it reflects that leg's progress even if RSI confirms a while
-  after it started. The overextended/underextended check uses a
-  level-based "armed" latch rather than a same-bar crossover, so it still
-  fires even when the swing-confirmation lag means the trend structure
-  confirms a few bars after RSI actually crossed the threshold.
+  using whichever leg's origin and far point are current at that moment,
+  so it reflects that leg's progress even if RSI confirms a while after it
+  started. The overextended/underextended check uses a level-based
+  "armed" latch rather than a same-bar crossover, so it still fires even
+  when the swing-confirmation lag means the trend structure confirms a
+  few bars after RSI actually crossed the threshold.
 - A genuine opposite structure break ends the whole trend (not just the
   current leg), freezing whichever line was active at that point
   permanently — lines are never deleted, so the full history of
@@ -194,16 +185,12 @@ already-overextended trend:
   along the line's own slope, so it doesn't stop dead exactly at the last
   touch — closer to how a hand-drawn trend line usually runs slightly
   past its last contact point.
-- The break level always ratchets to the most recent confirmed pivot,
-  regardless of current trend state. A close back above the most recent
-  lower-high pivot (or below the most recent higher-low) is a legitimate
-  micro-reversal/bounce — exactly what this indicator is meant to catch,
-  even within a larger trend. An earlier attempt froze the
-  opposite-direction level once a trend was confirmed, on the theory that
-  a reversal-direction line appearing mid-trend was a bug, but that meant
-  a reversal had to clear the price level from before the entire PRIOR
-  trend even started — an almost unreachable bar after any real move —
-  so breaks (and therefore lines) almost stopped firing at all.
+- The break level (used purely to confirm overall trend direction, not to
+  anchor the line itself) always ratchets to the most recent confirmed
+  pivot, regardless of current trend state. A close back above the most
+  recent lower-high pivot (or below the most recent higher-low) is a
+  legitimate micro-reversal/bounce — exactly what this indicator is meant
+  to catch, even within a larger trend.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in
