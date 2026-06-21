@@ -150,8 +150,8 @@ already-overextended trend:
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
   for a pullback to form a second confirming pivot.
-- A trend line has a FIXED origin — the swing low (uptrend) or swing high
-  (downtrend) that launched the move, captured once when the leg starts —
+- Each LEG of a trend gets its own line — an origin anchored to the swing
+  low (uptrend) or swing high (downtrend) that started that specific leg,
   and a far point that continuously tracks the running extreme (the
   highest high so far for an uptrend, the lowest low so far for a
   downtrend) using each bar's own real wick. Neither point is ever a
@@ -159,29 +159,34 @@ already-overextended trend:
   candle's body and make the line cut through printed candles instead of
   touching their corners/wicks. The far point updates every single bar a
   new extreme prints, with no pivot-confirmation lag, so the line never
-  falls behind price the way an earlier pivot-gated design did.
+  falls behind price.
+- Every time a NEW swing pivot confirms in the trend's direction (a fresh
+  lower high while bearish, a fresh higher low while bullish), the line in
+  progress freezes permanently exactly where it had reached — left on the
+  chart — and a brand new line begins anchored to THAT new pivot as its
+  origin. A single line stretching from the very first origin all the way
+  to the eventual absolute extreme inevitably cut through any bounce in
+  between, since real price doesn't move in one constant-slope diagonal
+  across multiple distinct legs; one separate line per leg, each anchored
+  to the actual swing point that started it, matches how a trend line is
+  drawn by hand leg by leg. (A "re-anchor on violation" approach — freezing
+  and restarting only when price closed back through the line's own
+  projection — was tried first but removed: a slope built from a recent,
+  narrow origin-to-extreme span triggered "violations" almost immediately
+  after nearly every new extreme, producing a runaway fan of one-bar
+  lines instead.)
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
   or below oversold during a confirmed downtrend = "underextended") —
-  using the origin and running extreme already accumulated since the leg
-  began, so it reflects the move's full progress even if RSI confirms a
-  while after the breakout. The overextended/underextended check uses a
+  using whichever leg's origin and running extreme are current at that
+  moment, so it reflects that leg's progress even if RSI confirms a while
+  after it started. The overextended/underextended check uses a
   level-based "armed" latch rather than a same-bar crossover, so it still
   fires even when the swing-confirmation lag means the trend structure
   confirms a few bars after RSI actually crossed the threshold.
-- If price stops making new extremes, the line simply stays put at the
-  last one — it does not need a separate "divergence" mechanism, since
-  there's nothing to fall behind: the far point IS the actual running
-  extreme. A "re-anchor on violation" mechanism (freezing the line and
-  starting a fresh one from the same origin whenever price closed back
-  through its own projection, to avoid a single straight line cutting
-  through an intermediate bounce) was tried but removed — comparing
-  against a slope built from a recent, narrow origin-to-extreme span
-  triggered "violations" almost immediately after nearly every new
-  extreme, producing a runaway fan of one-bar lines. Only a genuine
-  opposite structure break ends a leg, at which point the current line
-  freezes permanently exactly as drawn and stays on the chart as a record
-  of that completed leg — lines are never deleted, so the full history of
+- A genuine opposite structure break ends the whole trend (not just the
+  current leg), freezing whichever line was active at that point
+  permanently — lines are never deleted, so the full history of
   overextended/underextended trend lines for the day remains visible. The
   break is flagged with its own label and `alertcondition()`.
 - The line's far point also gets a small overshoot
