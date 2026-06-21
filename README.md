@@ -188,7 +188,14 @@ already-overextended trend:
   price actually closes back through the line itself by more than the
   break margin (`Minimum break size`, the same ATR multiple used for the
   overall structure-break check). The break is flagged with its own label
-  and `alertcondition()`.
+  and `alertcondition()`. Once frozen, the line gets a final small
+  overshoot (`Extend a frozen line past its break point`, default 6 bars)
+  projected along its own slope, so the finished line is easy to see
+  instead of stopping dead exactly at the break.
+- A debug table (bottom-right, toggled by `Show debug markers`) prints the
+  exact origin/far bar+price and resulting slope for whichever line(s) are
+  currently tracking, to verify anchor placement precisely rather than by
+  eye.
 - An earlier version only moved a line's far edge when a new pivot
   confirmed, which left the line sitting frozen — looking stopped — for
   the entire stretch between pivots even while the trend it represented

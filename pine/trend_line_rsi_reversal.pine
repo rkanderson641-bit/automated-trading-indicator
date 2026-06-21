@@ -14,8 +14,9 @@ overbought      = input.float(70, "Overbought (overextended)", group="RSI")
 oversold        = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor       = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor       = input.color(color.red, "Bearish Trend Line Color", group="Style")
-showLabels      = input.bool(true, "Show signal/break labels", group="Style")
-showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
+showLabels       = input.bool(true, "Show signal/break labels", group="Style")
+freezeExtendBars = input.int(6, "Extend a frozen line past its break point (bars)", minval=0, group="Style")
+showDebug        = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
 // A bearish trend line connects swing HIGHS only -- never a high to a low.
@@ -246,6 +247,10 @@ if trackingBull and not na(bullOriginBar)
     bullSlope        = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
     bullProjectedNow = bullFarPrice + bullSlope * (bar_index - bullFarBar)
     if close < bullProjectedNow - atrVal * minBreakAtrMult
+        // Extend a touch past the actual break point before freezing, so
+        // the finished line reads clearly instead of stopping dead.
+        if not na(bullLine) and freezeExtendBars > 0
+            line.set_xy2(bullLine, bar_index + freezeExtendBars, bullProjectedNow + bullSlope * freezeExtendBars)
         trackingBull    := false
         bullBreak       := true
         bullLine        := na
@@ -265,6 +270,8 @@ if trackingBear and not na(bearOriginBar)
     bearSlope        = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
     bearProjectedNow = bearFarPrice + bearSlope * (bar_index - bearFarBar)
     if close > bearProjectedNow + atrVal * minBreakAtrMult
+        if not na(bearLine) and freezeExtendBars > 0
+            line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
         trackingBear    := false
         bearBreak       := true
         bearLine        := na
@@ -279,6 +286,20 @@ if trackingBear and not na(bearOriginBar)
             bearLine := line.new(bearOriginBar, bearOriginPrice, bar_index, bearProjectedNow, extend=extend.none, color=bearColor, width=2)
         else
             line.set_xy2(bearLine, bar_index, bearProjectedNow)
+
+// Live numeric readout of whichever line(s) are currently tracking --
+// exact origin/far anchors and the resulting slope, so anchor placement
+// can be verified precisely instead of estimated from chart pixels.
+if showDebug and barstate.islast
+    var table dbgTable = table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    bullDbgSlope = trackingBull and not na(bullOriginBar) and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : na
+    bearDbgSlope = trackingBear and not na(bearOriginBar) and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : na
+    bullDbgText  = trackingBull and not na(bullOriginBar) ? "o(" + str.tostring(bullOriginBar) + ", " + str.tostring(bullOriginPrice, format.mintick) + ")  f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####") : "inactive"
+    bearDbgText  = trackingBear and not na(bearOriginBar) ? "o(" + str.tostring(bearOriginBar) + ", " + str.tostring(bearOriginPrice, format.mintick) + ")  f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####") : "inactive"
+    table.cell(dbgTable, 0, 0, "Bull", text_color=color.white, bgcolor=color.new(color.green, 60))
+    table.cell(dbgTable, 1, 0, bullDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "Bear", text_color=color.white, bgcolor=color.new(color.red, 60))
+    table.cell(dbgTable, 1, 1, bearDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
