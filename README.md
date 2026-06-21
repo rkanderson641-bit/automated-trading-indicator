@@ -149,28 +149,20 @@ already-overextended trend:
 - Trend direction uses a structure-break definition (same as
   `reversal_confluence.pine`): a close beyond the most recent prior swing
   high/low confirms a bullish/bearish trend immediately, without waiting
-  for a pullback to form a second confirming pivot.
+  for a pullback to form a second confirming pivot. This is used only to
+  pick which pivot type to anchor on and to gate RSI-trigger eligibility
+  — never to end an already-active line (see below).
 - A bearish trend line connects swing HIGHS only — never a high to a low.
   A bullish trend line connects swing LOWS only. Both points of a given
   line are always the same type of pivot, exactly like a hand-drawn
   descending-resistance or ascending-support line: origin = the highest
   high that started a downtrend leg / lowest low that started an uptrend
-  leg, far point = the lowest high / highest low reached so far. (An
-  earlier version's far point tracked the running lowest low for a
-  bearish line / highest high for a bullish line, every bar — which was
-  simply wrong, connecting a high to a low instead of two points of the
-  same type.)
+  leg, far point = the lowest high / highest low reached so far.
 - The far point rolls forward to each NEW confirmed same-type pivot that
   CONTINUES the structure (a lower high while bearish, a higher low while
   bullish). A pivot that fails to continue (equal/higher high while
   bearish, equal/lower low while bullish) is simply not a touch point —
-  it's ignored and the line stays exactly as it was, waiting for either a
-  pivot that does continue or a genuine opposite-direction structure
-  break. (An earlier version restarted the line on ANY non-continuing
-  pivot, which was also wrong — discarding the whole line over one
-  pivot that merely failed to improve it caused the line to fragment into
-  short, often invisible pieces instead of running continuously across
-  the trend.)
+  it's ignored and the anchor stays exactly as it was.
 - A pivot that DOES continue the structure, but lands beyond where the
   established line itself already projects to that bar by more than a
   small ATR margin (`Divergence sensitivity margin`, default 0.5x ATR) —
@@ -179,34 +171,33 @@ already-overextended trend:
   steeper, diverging from the existing line. The existing line freezes
   exactly at its last point (left on the chart) and a brand new, steeper
   line begins from that same point, extended out to this new pivot,
-  following the same rules from there on. The ATR margin keeps ordinary
-  pivot-to-pivot noise from constantly restarting the line over a trivial
-  overshoot.
+  following the same rules from there on.
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
-  or below oversold during a confirmed downtrend = "underextended") —
-  using whichever leg's origin and far point are current at that moment,
-  so it reflects that leg's progress even if RSI confirms a while after it
-  started. The overextended/underextended check uses a level-based
-  "armed" latch rather than a same-bar crossover, so it still fires even
-  when the swing-confirmation lag means the trend structure confirms a
-  few bars after RSI actually crossed the threshold.
-- A genuine opposite structure break ends the whole trend (not just the
-  current leg), freezing whichever line was active at that point
-  permanently — lines are never deleted, so the full history of
-  overextended/underextended trend lines for the day remains visible. The
-  break is flagged with its own label and `alertcondition()`.
-- The line's far point also gets a small overshoot
-  (`Extend each line past its last point`, default 8 bars) projected
-  along the line's own slope, so it doesn't stop dead exactly at the last
-  touch — closer to how a hand-drawn trend line usually runs slightly
-  past its last contact point.
-- The break level (used purely to confirm overall trend direction, not to
-  anchor the line itself) always ratchets to the most recent confirmed
-  pivot, regardless of current trend state. A close back above the most
-  recent lower-high pivot (or below the most recent higher-low) is a
-  legitimate micro-reversal/bounce — exactly what this indicator is meant
-  to catch, even within a larger trend.
+  or below oversold during a confirmed downtrend = "underextended"), using
+  whichever leg's origin and far point are current at that moment. The
+  overextended/underextended check uses a level-based "armed" latch rather
+  than a same-bar crossover, so it still fires even when the swing-
+  confirmation lag means the trend structure confirms a few bars after RSI
+  actually crossed the threshold.
+- Once drawn, the line behaves exactly like `auto_support_resistance.pine`'s
+  level lines: every bar it extends forward to the current bar along its
+  own established slope, instead of sitting frozen at its last confirmed
+  touch point until the next pivot happens to arrive. It only stops —
+  frozen in place, left on the chart permanently, never deleted — once
+  price actually closes back through the line itself by more than the
+  break margin (`Minimum break size`, the same ATR multiple used for the
+  overall structure-break check). The break is flagged with its own label
+  and `alertcondition()`.
+- An earlier version only moved a line's far edge when a new pivot
+  confirmed, which left the line sitting frozen — looking stopped — for
+  the entire stretch between pivots even while the trend it represented
+  was still clearly active; that's why it kept appearing to stop short of
+  where price obviously continued the trend. A version before that
+  discarded the whole line over any single pivot that merely failed to
+  extend it, fragmenting long trends into short, often invisible pieces.
+  An even earlier version connected a high to a low instead of two points
+  of the same type.
 
 RSI itself isn't plotted by this script (it's overlay-only, used purely
 to gate when a line gets drawn) — pair it with a regular RSI indicator in

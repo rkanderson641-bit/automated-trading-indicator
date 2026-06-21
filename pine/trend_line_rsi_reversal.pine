@@ -15,7 +15,6 @@ oversold        = input.float(30, "Oversold (underextended)", group="RSI")
 bullColor       = input.color(color.green, "Bullish Trend Line Color", group="Style")
 bearColor       = input.color(color.red, "Bearish Trend Line Color", group="Style")
 showLabels      = input.bool(true, "Show signal/break labels", group="Style")
-extendBars      = input.int(8, "Extend each line past its last point (bars)", minval=0, group="Style")
 showDebug       = input.bool(true, "Show debug markers (structure break)", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -28,30 +27,27 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 //
 // The far point rolls forward to each NEW confirmed same-type pivot that
 // CONTINUES the structure (a lower high while bearish, a higher low while
-// bullish). A pivot that fails to continue (equal/higher high while
-// bearish, equal/lower low while bullish) is simply not a touch point --
-// it's ignored and the line stays exactly as it was, waiting for either a
-// pivot that does continue or a genuine opposite-direction structure break.
-// That break ends the whole trend, freezing whichever line was active
-// (left on the chart) -- lines are never deleted.
+// bullish). A pivot that fails to continue is simply not a touch point --
+// it's ignored, the anchor stays exactly as it was. A pivot that DOES
+// continue, but lands beyond where the established line already projects
+// to that bar by more than a small ATR margin, means the trend has gotten
+// steeper (diverged): the anchor resets to start a fresh, steeper line
+// from that same point out to the new pivot.
 //
-// A pivot that DOES continue the structure, but lands beyond where the
-// established line itself already projects to that bar by more than a
-// small ATR margin (a lower high meaningfully lower than the line
-// predicts, a higher low meaningfully higher than the line predicts),
-// means the trend has gotten steeper -- it has diverged from the existing
-// line. When that happens the existing line freezes exactly at its last
-// point (left on the chart) and a brand new, steeper line begins from
-// that same point, extended out to this new pivot, following the same
-// rules from there on. The ATR margin keeps ordinary pivot-to-pivot noise
-// from constantly restarting the line over trivial overshoot.
+// Once RSI confirms the trend is stretched and a line starts being drawn,
+// it behaves exactly like auto_support_resistance.pine's level lines:
+// every bar it extends forward to the current bar along its established
+// slope, instead of sitting frozen at its last confirmed touch point. It
+// only stops -- frozen in place, left on the chart permanently -- once
+// price actually closes back through the LINE ITSELF (not some unrelated
+// past pivot) by more than the break margin. Lines are never deleted.
 //
-// An earlier version's far point tracked the running lowest low (for a
-// bearish line) / highest high (for a bullish line) every bar, which was
-// simply wrong -- it connected a high to a low, the opposite of what a
-// trend line actually is. A later version restarted the line on ANY
-// non-continuing pivot, which was also wrong -- a single pivot that
-// doesn't improve the structure isn't a reason to discard the whole line.
+// Earlier versions got this wrong in three ways: connecting a high to a
+// low instead of two points of the same type; discarding the whole line
+// over any single pivot that merely failed to extend it; and only
+// redrawing the line's far edge when a new pivot confirmed, which left it
+// sitting frozen (looking stopped) for the entire stretch between pivots
+// even while the trend it represented was still very much alive.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -78,10 +74,10 @@ var bool  hadBullishBreak = false
 var bool  hadBearishBreak = false
 
 // breakLastHigh/breakLastLow always ratchet to the most recent confirmed
-// pivot, regardless of current trend state. A close back above the most
-// recent lower-high pivot (or below the most recent higher-low) is a
-// legitimate micro-reversal/bounce -- exactly what this indicator is
-// meant to catch, even within a larger trend.
+// pivot, regardless of current trend state -- used only to establish
+// overall directional bias (which pivot type to anchor on, and RSI
+// trigger eligibility), never to end an already-active line. Ending an
+// active line is handled separately, below, against the line itself.
 if not na(pivotHighVal)
     breakLastHigh := pivotHighVal
 if not na(pivotLowVal)
@@ -91,15 +87,13 @@ bullishBreakNowRaw = not na(breakLastHigh) and close > breakLastHigh + atrVal * 
 bearishBreakNowRaw = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
 
 // On a rare bar where price simultaneously clears both thresholds, only
-// let ONE side fire so the two break blocks can't fight over the shared
+// let ONE side fire so the two blocks can't fight over the shared
 // hadBullishBreak/hadBearishBreak flags.
 bullishBreakNow = bullishBreakNowRaw
 bearishBreakNow = bearishBreakNowRaw and not bullishBreakNowRaw
 
-var line bullLine    = na
-var line bearLine    = na
-var line bullCapLine = na
-var line bearCapLine = na
+var line bullLine = na
+var line bearLine = na
 var bool trackingBull = false
 var bool trackingBear = false
 
@@ -128,19 +122,11 @@ if bullishBreakNow
         bullOriginPrice := lastPivotLow
         bullFarBar      := bullOriginBar
         bullFarPrice    := bullOriginPrice
-        // Forget (don't delete) the previous leg's line/cap -- they stay
-        // on the chart as permanent history of that completed leg.
-        bullLine    := na
-        bullCapLine := na
+        // Forget (don't delete) the previous leg's line -- it stays on
+        // the chart as permanent history of that completed leg.
+        bullLine := na
         if showDebug
             label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-    // A fresh bullish break means the downtrend it was tracking no
-    // longer holds. The bearish line itself is left in place on the chart.
-    if trackingBear
-        bearBreak := true
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
-        trackingBear := false
 
 if bearishBreakNow
     freshBearStart  = not hadBearishBreak
@@ -154,25 +140,18 @@ if bearishBreakNow
         bearOriginPrice := lastPivotHigh
         bearFarBar      := bearOriginBar
         bearFarPrice    := bearOriginPrice
-        bearLine    := na
-        bearCapLine := na
+        bearLine := na
         if showDebug
             label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-    // A fresh bearish break means the uptrend it was tracking no longer
-    // holds. The bullish line itself is left in place on the chart.
-    if trackingBull
-        bullBreak := true
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
-        trackingBull := false
 
 // Roll the far point forward on each new SAME-TYPE pivot that continues
 // the structure (a lower high while bearish, a higher low while bullish).
 // A pivot that fails to continue is simply ignored -- not a touch point,
-// the line stays exactly as it was. A pivot that continues but overshoots
-// the established line's own projection to that bar means the trend has
-// gotten steeper (diverged): freeze the line where it stands and start a
-// fresh, steeper one from that same point out to this new pivot.
+// the anchor stays exactly as it was. A pivot that continues but
+// overshoots the established line's own projection to that bar by more
+// than the divergence margin means the trend has gotten steeper: freeze
+// the anchor where it stands and start a fresh, steeper one from that
+// same point out to this new pivot.
 if hadBullishBreak and not na(pivotLowVal)
     if na(bullOriginBar)
         bullOriginBar   := pivotBarIdx
@@ -185,8 +164,7 @@ if hadBullishBreak and not na(pivotLowVal)
         bullEstSlope  = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
         bullProjected = bullFarPrice + bullEstSlope * (pivotBarIdx - bullFarBar)
         if bullFarBar != bullOriginBar and pivotLowVal > bullProjected + atrVal * divergeAtrMult
-            bullLine    := na
-            bullCapLine := na
+            bullLine        := na
             bullOriginBar   := bullFarBar
             bullOriginPrice := bullFarPrice
             bullFarBar      := pivotBarIdx
@@ -214,8 +192,7 @@ if hadBearishBreak and not na(pivotHighVal)
         bearEstSlope  = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
         bearProjected = bearFarPrice + bearEstSlope * (pivotBarIdx - bearFarBar)
         if bearFarBar != bearOriginBar and pivotHighVal < bearProjected - atrVal * divergeAtrMult
-            bearLine    := na
-            bearCapLine := na
+            bearLine        := na
             bearOriginBar   := bearFarBar
             bearOriginPrice := bearFarPrice
             bearFarBar      := pivotBarIdx
@@ -259,35 +236,49 @@ if bearTrigger
     if showLabels
         label.new(bar_index, high, text="UNDEREXTENDED", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=color.white, size=size.small)
 
-// Draw/update the line for as long as it's being tracked -- the origin
-// only moves when the structure breaks (handled above); the far point
-// rolls forward to each new confirming same-type pivot. extendBars adds a
-// small overshoot past the far point, projected along the line's own
-// slope, so it doesn't stop dead exactly at the last touch.
+// Once a line is being tracked, extend it to the current bar along its
+// established slope every single bar -- exactly like auto_support_
+// resistance.pine's level lines -- instead of sitting frozen at its last
+// confirmed touch point. It only stops, frozen in place permanently
+// (never deleted), once price actually closes back through the LINE
+// ITSELF by more than the break margin -- not some unrelated past pivot.
 if trackingBull and not na(bullOriginBar)
-    if na(bullLine)
-        bullLine := line.new(bullOriginBar, bullOriginPrice, bullFarBar, bullFarPrice, extend=extend.none, color=bullColor, width=2)
+    bullSlope        = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
+    bullProjectedNow = bullFarPrice + bullSlope * (bar_index - bullFarBar)
+    if close < bullProjectedNow - atrVal * minBreakAtrMult
+        trackingBull    := false
+        bullBreak       := true
+        bullLine        := na
+        bullOriginBar   := na
+        bullOriginPrice := na
+        bullFarBar      := na
+        bullFarPrice    := na
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
     else
-        line.set_xy2(bullLine, bullFarBar, bullFarPrice)
-    // Only when the far point has actually moved past the origin -- right
-    // when a leg starts, before any new low has confirmed, they're still
-    // the same point and a slope is undefined (division by zero).
-    if extendBars > 0 and bullFarBar != bullOriginBar
-        if not na(bullCapLine)
-            line.delete(bullCapLine)
-        bullSlope = (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar)
-        bullCapLine := line.new(bullFarBar, bullFarPrice, bullFarBar + extendBars, bullFarPrice + bullSlope * extendBars, extend=extend.none, color=bullColor, width=2)
+        if na(bullLine)
+            bullLine := line.new(bullOriginBar, bullOriginPrice, bar_index, bullProjectedNow, extend=extend.none, color=bullColor, width=2)
+        else
+            line.set_xy2(bullLine, bar_index, bullProjectedNow)
 
 if trackingBear and not na(bearOriginBar)
-    if na(bearLine)
-        bearLine := line.new(bearOriginBar, bearOriginPrice, bearFarBar, bearFarPrice, extend=extend.none, color=bearColor, width=2)
+    bearSlope        = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
+    bearProjectedNow = bearFarPrice + bearSlope * (bar_index - bearFarBar)
+    if close > bearProjectedNow + atrVal * minBreakAtrMult
+        trackingBear    := false
+        bearBreak       := true
+        bearLine        := na
+        bearOriginBar   := na
+        bearOriginPrice := na
+        bearFarBar      := na
+        bearFarPrice    := na
+        if showLabels
+            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
     else
-        line.set_xy2(bearLine, bearFarBar, bearFarPrice)
-    if extendBars > 0 and bearFarBar != bearOriginBar
-        if not na(bearCapLine)
-            line.delete(bearCapLine)
-        bearSlope = (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar)
-        bearCapLine := line.new(bearFarBar, bearFarPrice, bearFarBar + extendBars, bearFarPrice + bearSlope * extendBars, extend=extend.none, color=bearColor, width=2)
+        if na(bearLine)
+            bearLine := line.new(bearOriginBar, bearOriginPrice, bar_index, bearProjectedNow, extend=extend.none, color=bearColor, width=2)
+        else
+            line.set_xy2(bearLine, bar_index, bearProjectedNow)
 
 alertcondition(bullTrigger, title="Bullish Trend Overextended", message="Uptrend confirmed and RSI is overbought -- watch for reversal")
 alertcondition(bearTrigger, title="Bearish Trend Underextended", message="Downtrend confirmed and RSI is oversold -- watch for reversal")
