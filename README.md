@@ -176,13 +176,21 @@ already-overextended trend:
   small ATR margin (`Divergence sensitivity margin`, default 0.5x ATR) —
   a lower high meaningfully lower than the line predicts, a higher low
   meaningfully higher than the line predicts — means the trend has gotten
-  steeper, diverging from the existing line, UNLESS the resulting line
-  would cut into the open/close body of a candle in between the two
-  points (touching a wick is fine, cutting into a body is not) — in that
-  case the touch point is treated as a normal continuation instead, and
-  the branch is deferred until a touch point comes along where the
-  geometry actually works. Otherwise, the existing line freezes exactly at
-  its last point (left on the chart) and a brand new, steeper line begins
+  steeper, diverging from the existing line, UNLESS:
+  - the resulting line would cut into the open/close body of a candle in
+    between the two points (touching a wick is fine, cutting into a body
+    is not), or
+  - the two points are closer together than the swing lookback — two touch
+    points only a handful of bars apart (e.g. bracketing one huge spike
+    candle) produce a slope so steep that continuously extending it shoots
+    the line almost straight up or down within just a few more bars.
+
+  In either case the touch point is treated as a normal continuation
+  instead (using the existing, more distant origin as the slope's anchor,
+  which is far more stable), and the branch is deferred until a touch
+  point comes along where the geometry actually works. Otherwise, the
+  existing line freezes exactly at its last point (left on the chart) and
+  a brand new, steeper line begins
   from that same point, extended out to this new touch point, following
   the same rules from there on — drawn in a separate, lighter color
   (`Bullish/Bearish Divergent Line Color`) so divergent branches are easy

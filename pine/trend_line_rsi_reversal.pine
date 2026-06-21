@@ -229,7 +229,14 @@ if hadBullishBreak and not na(touchPivotLowVal)
         bullProjected   = bullFarPrice + bullEstSlope * (touchPivotBarIdx - bullFarBar)
         bullDiverges    = bullFarBar != bullOriginBar and touchPivotLowVal > bullProjected + atrVal * divergeAtrMult
         bullBranchClean = not lineEntersBody(bullFarBar, bullFarPrice, touchPivotBarIdx, touchPivotLowVal)
-        if bullDiverges and bullBranchClean
+        // A branch needs at least swingBars between its two points -- two
+        // touch points just a handful of bars apart (e.g. bracketing one
+        // huge spike candle) produce a slope so steep that continuous
+        // extension shoots the line almost straight up/down within a few
+        // bars. Without enough run, treat it as a normal continuation
+        // instead and wait for a touch point with real separation.
+        bullEnoughRun   = touchPivotBarIdx - bullFarBar >= swingBars
+        if bullDiverges and bullBranchClean and bullEnoughRun
             bullLine        := na
             bullIsDivergent := true
             bullOriginBar   := bullFarBar
@@ -261,7 +268,14 @@ if hadBearishBreak and not na(touchPivotHighVal)
         bearProjected   = bearFarPrice + bearEstSlope * (touchPivotBarIdx - bearFarBar)
         bearDiverges    = bearFarBar != bearOriginBar and touchPivotHighVal < bearProjected - atrVal * divergeAtrMult
         bearBranchClean = not lineEntersBody(bearFarBar, bearFarPrice, touchPivotBarIdx, touchPivotHighVal)
-        if bearDiverges and bearBranchClean
+        // A branch needs at least swingBars between its two points -- two
+        // touch points just a handful of bars apart (e.g. bracketing one
+        // huge spike candle) produce a slope so steep that continuous
+        // extension shoots the line almost straight up/down within a few
+        // bars. Without enough run, treat it as a normal continuation
+        // instead and wait for a touch point with real separation.
+        bearEnoughRun   = touchPivotBarIdx - bearFarBar >= swingBars
+        if bearDiverges and bearBranchClean and bearEnoughRun
             bearLine        := na
             bearIsDivergent := true
             bearOriginBar   := bearFarBar
