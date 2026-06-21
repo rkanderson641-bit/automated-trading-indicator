@@ -21,24 +21,34 @@ showDebug       = input.bool(true, "Show debug markers (structure break)", group
 // A bearish trend line connects swing HIGHS only -- never a high to a low.
 // A bullish trend line connects swing LOWS only. Both points of a given
 // line are always the same type of pivot, exactly like a hand-drawn
-// descending-resistance or ascending-support line.
+// descending-resistance or ascending-support line: origin = the highest
+// high that started a downtrend leg / lowest low that started an uptrend
+// leg, far point = the lowest high / highest low reached so far.
 //
-// The line starts at an origin pivot (the swing high/low that began the
-// leg) and its far point rolls forward to each NEW confirmed same-type
-// pivot, as long as that new pivot continues the structure (a lower high
-// while bearish, a higher low while bullish). If a new pivot instead
-// BREAKS that structure (a higher high than the line's current far point
-// while bearish, a lower low while bullish), the line in progress is no
-// longer valid: it freezes exactly where it had reached (left on the
-// chart) and a brand new line starts, anchored to that breaking pivot as
-// its fresh origin. A genuine opposite structure break ends the whole
-// trend, freezing whichever line was active the same way.
+// The far point rolls forward to each NEW confirmed same-type pivot that
+// CONTINUES the structure (a lower high while bearish, a higher low while
+// bullish). A pivot that fails to continue (equal/higher high while
+// bearish, equal/lower low while bullish) is simply not a touch point --
+// it's ignored and the line stays exactly as it was, waiting for either a
+// pivot that does continue or a genuine opposite-direction structure break.
+// That break ends the whole trend, freezing whichever line was active
+// (left on the chart) -- lines are never deleted.
+//
+// A pivot that DOES continue the structure, but lands beyond where the
+// established line itself already projects to that bar (a lower high
+// that's lower than the line predicts, a higher low that's higher than the
+// line predicts), means the trend has gotten steeper -- it has diverged
+// from the existing line. When that happens the existing line freezes
+// exactly at its last point (left on the chart) and a brand new, steeper
+// line begins from that same point, extended out to this new pivot,
+// following the same rules from there on.
 //
 // An earlier version's far point tracked the running lowest low (for a
 // bearish line) / highest high (for a bullish line) every bar, which was
 // simply wrong -- it connected a high to a low, the opposite of what a
-// trend line actually is. It also never waited for pivot confirmation,
-// so it could never produce the right shape regardless.
+// trend line actually is. A later version restarted the line on ANY
+// non-continuing pivot, which was also wrong -- a single pivot that
+// doesn't improve the structure isn't a reason to discard the whole line.
 // ---------------------------------------------------------------------------
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
@@ -155,41 +165,68 @@ if bearishBreakNow
 
 // Roll the far point forward on each new SAME-TYPE pivot that continues
 // the structure (a lower high while bearish, a higher low while bullish).
-// A new pivot that instead BREAKS the structure (higher than the current
-// far point while bearish, lower while bullish) means the line in
-// progress is no longer valid -- freeze it (left on the chart) and start
-// a fresh line anchored to that breaking pivot.
+// A pivot that fails to continue is simply ignored -- not a touch point,
+// the line stays exactly as it was. A pivot that continues but overshoots
+// the established line's own projection to that bar means the trend has
+// gotten steeper (diverged): freeze the line where it stands and start a
+// fresh, steeper one from that same point out to this new pivot.
 if hadBullishBreak and not na(pivotLowVal)
-    if not na(bullOriginBar) and (na(bullFarPrice) or pivotLowVal > bullFarPrice)
-        bullFarBar   := pivotBarIdx
-        bullFarPrice := pivotLowVal
-        if showDebug
-            label.new(bullFarBar, bullFarPrice, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
-    else
-        bullLine    := na
-        bullCapLine := na
+    if na(bullOriginBar)
         bullOriginBar   := pivotBarIdx
         bullOriginPrice := pivotLowVal
         bullFarBar      := bullOriginBar
         bullFarPrice    := bullOriginPrice
         if showDebug
             label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+    else if pivotLowVal > bullFarPrice
+        bullEstSlope  = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
+        bullProjected = bullFarPrice + bullEstSlope * (pivotBarIdx - bullFarBar)
+        if bullFarBar != bullOriginBar and pivotLowVal > bullProjected
+            bullLine    := na
+            bullCapLine := na
+            bullOriginBar   := bullFarBar
+            bullOriginPrice := bullFarPrice
+            bullFarBar      := pivotBarIdx
+            bullFarPrice    := pivotLowVal
+            if showDebug
+                label.new(bullFarBar, bullFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+        else
+            bullFarBar   := pivotBarIdx
+            bullFarPrice := pivotLowVal
+            if showDebug
+                label.new(bullFarBar, bullFarPrice, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+    else
+        if showDebug
+            label.new(pivotBarIdx, pivotLowVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
 
 if hadBearishBreak and not na(pivotHighVal)
-    if not na(bearOriginBar) and (na(bearFarPrice) or pivotHighVal < bearFarPrice)
-        bearFarBar   := pivotBarIdx
-        bearFarPrice := pivotHighVal
-        if showDebug
-            label.new(bearFarBar, bearFarPrice, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
-    else
-        bearLine    := na
-        bearCapLine := na
+    if na(bearOriginBar)
         bearOriginBar   := pivotBarIdx
         bearOriginPrice := pivotHighVal
         bearFarBar      := bearOriginBar
         bearFarPrice    := bearOriginPrice
         if showDebug
             label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+    else if pivotHighVal < bearFarPrice
+        bearEstSlope  = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
+        bearProjected = bearFarPrice + bearEstSlope * (pivotBarIdx - bearFarBar)
+        if bearFarBar != bearOriginBar and pivotHighVal < bearProjected
+            bearLine    := na
+            bearCapLine := na
+            bearOriginBar   := bearFarBar
+            bearOriginPrice := bearFarPrice
+            bearFarBar      := pivotBarIdx
+            bearFarPrice    := pivotHighVal
+            if showDebug
+                label.new(bearFarBar, bearFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+        else
+            bearFarBar   := pivotBarIdx
+            bearFarPrice := pivotHighVal
+            if showDebug
+                label.new(bearFarBar, bearFarPrice, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+    else
+        if showDebug
+            label.new(pivotBarIdx, pivotHighVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
 
 rsiVal = ta.rsi(close, rsiLen)
 rsiMa  = ta.sma(rsiVal, rsiMaLen)

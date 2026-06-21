@@ -153,19 +153,32 @@ already-overextended trend:
 - A bearish trend line connects swing HIGHS only — never a high to a low.
   A bullish trend line connects swing LOWS only. Both points of a given
   line are always the same type of pivot, exactly like a hand-drawn
-  descending-resistance or ascending-support line. (An earlier version's
-  far point tracked the running lowest low for a bearish line / highest
-  high for a bullish line, every bar — which was simply wrong, connecting
-  a high to a low instead of two points of the same type.)
-- The line starts at an origin pivot (the swing high/low that began the
-  leg) and its far point rolls forward to each NEW confirmed same-type
-  pivot, as long as that new pivot continues the structure (a lower high
-  while bearish, a higher low while bullish). If a new pivot instead
-  BREAKS that structure (a higher high than the line's current far point
-  while bearish, a lower low while bullish), the line in progress is no
-  longer valid: it freezes exactly where it had reached — left on the
-  chart — and a brand new line starts, anchored to that breaking pivot as
-  its fresh origin.
+  descending-resistance or ascending-support line: origin = the highest
+  high that started a downtrend leg / lowest low that started an uptrend
+  leg, far point = the lowest high / highest low reached so far. (An
+  earlier version's far point tracked the running lowest low for a
+  bearish line / highest high for a bullish line, every bar — which was
+  simply wrong, connecting a high to a low instead of two points of the
+  same type.)
+- The far point rolls forward to each NEW confirmed same-type pivot that
+  CONTINUES the structure (a lower high while bearish, a higher low while
+  bullish). A pivot that fails to continue (equal/higher high while
+  bearish, equal/lower low while bullish) is simply not a touch point —
+  it's ignored and the line stays exactly as it was, waiting for either a
+  pivot that does continue or a genuine opposite-direction structure
+  break. (An earlier version restarted the line on ANY non-continuing
+  pivot, which was also wrong — discarding the whole line over one
+  pivot that merely failed to improve it caused the line to fragment into
+  short, often invisible pieces instead of running continuously across
+  the trend.)
+- A pivot that DOES continue the structure, but lands beyond where the
+  established line itself already projects to that bar (a lower high
+  that's lower than the line predicts, a higher low that's higher than
+  the line predicts), means the trend has gotten steeper — diverged from
+  the existing line. The existing line freezes exactly at its last point
+  (left on the chart) and a brand new, steeper line begins from that same
+  point, extended out to this new pivot, following the same rules from
+  there on.
 - The line is drawn the moment RSI's moving average confirms the trend is
   stretched (above overbought during a confirmed uptrend = "overextended,"
   or below oversold during a confirmed downtrend = "underextended") —
