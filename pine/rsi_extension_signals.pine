@@ -21,6 +21,7 @@ underColor   = input.color(color.green, "Underextended Label Color", group="Styl
 maOverColor  = input.color(color.yellow, "MA Overextension Label Color", group="Style")
 maUnderColor = input.color(color.aqua, "MA Underextension Label Color", group="Style")
 labelOffsetAtrMult = input.float(0.5, "Label Offset (x ATR)", minval=0, step=0.1, group="Style")
+labelTransparency  = input.int(20, "Label Background Transparency", minval=0, maxval=100, group="Style")
 
 showDebug = input.bool(true, "Show live RSI/MA debug readout", group="Debug")
 
@@ -74,16 +75,16 @@ farOffset  = atrVal * labelOffsetAtrMult * 3
 // Raw-RSI labels sit close to the bar; MA labels sit further out so the two
 // don't overlap when both fire on the same bar.
 if overExtended
-    label.new(bar_index, high + nearOffset, text="Overextended", style=label.style_label_down, color=color.new(overColor, 0), textcolor=color.white, size=size.small)
+    label.new(bar_index, high + nearOffset, text="Overextended", style=label.style_label_down, color=color.new(overColor, labelTransparency), textcolor=color.white, size=size.small)
 
 if underExtended
-    label.new(bar_index, low - nearOffset, text="Underextended", style=label.style_label_up, color=color.new(underColor, 0), textcolor=color.white, size=size.small)
+    label.new(bar_index, low - nearOffset, text="Underextended", style=label.style_label_up, color=color.new(underColor, labelTransparency), textcolor=color.white, size=size.small)
 
 if maOver
-    label.new(bar_index, high + farOffset, text="MA Overextension", style=label.style_label_down, color=color.new(maOverColor, 0), textcolor=color.black, size=size.small)
+    label.new(bar_index, high + farOffset, text="MA Overextension", style=label.style_label_down, color=color.new(maOverColor, labelTransparency), textcolor=color.black, size=size.small)
 
 if maUnder
-    label.new(bar_index, low - farOffset, text="MA Underextension", style=label.style_label_up, color=color.new(maUnderColor, 0), textcolor=color.black, size=size.small)
+    label.new(bar_index, low - farOffset, text="MA Underextension", style=label.style_label_up, color=color.new(maUnderColor, labelTransparency), textcolor=color.black, size=size.small)
 
 // Live numeric readout so the MA approach levels above can be tuned against
 // real values instead of estimating them from chart pixels. Also shows the
