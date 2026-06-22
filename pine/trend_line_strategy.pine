@@ -79,6 +79,17 @@ showDebug        = input.bool(true, "Show debug markers (touch points)", group="
 // closes back away in the new direction, that's a confirmed entry. If
 // price instead closes back through to the original side first, the break
 // is tagged a fakeout and the watch is cancelled.
+//
+// Bar-index drawing limit: a leg's origin can legitimately stay alive for
+// thousands of bars (a real, long-running, never-broken trend, or a leg
+// frozen on an intrusion waiting for the next clean touch point). Once
+// that gap from the current bar passes ~10000, Pine refuses to anchor a
+// line/label there by bar index ("x1 too far from current bar"). Every
+// origin/far point therefore also carries the TIMESTAMP it was set at
+// (captured with a small, always-safe lookback like time[touchBars] at
+// the moment it's first recorded, never reconstructed later for an
+// arbitrarily old bar), and lines/labels anchored to those points draw
+// with xloc.bar_time instead of a bar index, which has no such limit.
 // ---------------------------------------------------------------------------
 
 // Returns true if the straight line from (fromBar, fromPrice) to (toBar,
@@ -112,27 +123,37 @@ lineEntersBody(int fromBar, float fromPrice, int toBar, float toPrice) =>
 pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
 pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
 pivotBarIdx  = bar_index - swingBars
+pivotBarTime = time[swingBars]
 
 touchPivotHighVal = ta.pivothigh(high, touchBars, touchBars)
 touchPivotLowVal  = ta.pivotlow(low, touchBars, touchBars)
 touchPivotBarIdx  = bar_index - touchBars
+touchPivotBarTime = time[touchBars]
 
 // lastPivotHigh/lastPivotLow ratchet to the MOST RECENT confirmed swing
 // pivot, regardless of current trend state or whether it's higher/lower
 // than the previous one -- used only to seed a new origin the moment a
-// regime change happens, never to trigger that change itself.
-var float lastPivotHigh    = na
-var int   lastPivotHighBar = na
-var float lastPivotLow     = na
-var int   lastPivotLowBar  = na
+// regime change happens, never to trigger that change itself. The *Time
+// companions are captured the same bar the pivot confirms, at a small,
+// always-safe swingBars lookback -- never reconstructed later for a bar
+// that's since gone far in the past (see the "Bar-index drawing limit"
+// note above).
+var float lastPivotHigh     = na
+var int   lastPivotHighBar  = na
+var int   lastPivotHighTime = na
+var float lastPivotLow      = na
+var int   lastPivotLowBar   = na
+var int   lastPivotLowTime  = na
 
 if not na(pivotHighVal)
-    lastPivotHigh    := pivotHighVal
-    lastPivotHighBar := pivotBarIdx
+    lastPivotHigh     := pivotHighVal
+    lastPivotHighBar  := pivotBarIdx
+    lastPivotHighTime := pivotBarTime
 
 if not na(pivotLowVal)
-    lastPivotLow    := pivotLowVal
-    lastPivotLowBar := pivotBarIdx
+    lastPivotLow     := pivotLowVal
+    lastPivotLowBar  := pivotBarIdx
+    lastPivotLowTime := pivotBarTime
 
 atrVal = ta.atr(atrLen)
 
@@ -150,13 +171,17 @@ var bool bullIsDivergent = false
 var bool bearIsDivergent = false
 
 var int   bullOriginBar   = na
+var int   bullOriginTime  = na
 var float bullOriginPrice = na
 var int   bullFarBar      = na
+var int   bullFarTime     = na
 var float bullFarPrice    = na
 
 var int   bearOriginBar   = na
+var int   bearOriginTime  = na
 var float bearOriginPrice = na
 var int   bearFarBar      = na
+var int   bearFarTime     = na
 var float bearFarPrice    = na
 
 // Pending backtest-confirmation watches, one slot per direction -- a new
@@ -186,27 +211,33 @@ if trendState == 0
     if bootstrapBullBreak and not bootstrapBearBreak
         trendState      := 1
         bullOriginBar   := lastPivotLowBar
+        bullOriginTime  := lastPivotLowTime
         bullOriginPrice := lastPivotLow
         bullFarBar      := bullOriginBar
+        bullFarTime     := bullOriginTime
         bullFarPrice    := bullOriginPrice
         bullIsDivergent := false
         trackingBull    := false
         bullLine        := na
         if showDebug
             label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-            label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            if not na(bullOriginTime)
+                label.new(bullOriginTime, bullOriginPrice, text="L", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if bootstrapBearBreak and not bootstrapBullBreak
         trendState      := -1
         bearOriginBar   := lastPivotHighBar
+        bearOriginTime  := lastPivotHighTime
         bearOriginPrice := lastPivotHigh
         bearFarBar      := bearOriginBar
+        bearFarTime     := bearOriginTime
         bearFarPrice    := bearOriginPrice
         bearIsDivergent := false
         trackingBear    := false
         bearLine        := na
         if showDebug
             label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-            label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            if not na(bearOriginTime)
+                label.new(bearOriginTime, bearOriginPrice, text="H", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 // Roll the far point forward on each new SAME-TYPE touch point that
 // continues the structure (a lower high while bearish, a higher low while
@@ -229,12 +260,14 @@ if trendState == 0
 if trendState == 1 and not na(touchPivotLowVal)
     if na(bullOriginBar)
         bullOriginBar   := touchPivotBarIdx
+        bullOriginTime  := touchPivotBarTime
         bullOriginPrice := touchPivotLowVal
         bullFarBar      := bullOriginBar
+        bullFarTime     := bullOriginTime
         bullFarPrice    := bullOriginPrice
         bullIsDivergent := false
         if showDebug
-            label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            label.new(bullOriginTime, bullOriginPrice, text="L", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if touchPivotLowVal > bullFarPrice
         bullEstSlope      = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
         bullProjected     = bullFarPrice + bullEstSlope * (touchPivotBarIdx - bullFarBar)
@@ -246,18 +279,21 @@ if trendState == 1 and not na(touchPivotLowVal)
             bullLine        := na
             bullIsDivergent := true
             bullOriginBar   := bullFarBar
+            bullOriginTime  := bullFarTime
             bullOriginPrice := bullFarPrice
             bullFarBar      := touchPivotBarIdx
+            bullFarTime     := touchPivotBarTime
             bullFarPrice    := touchPivotLowVal
             trackingBull    := true
             if showDebug
-                label.new(bullFarBar, bullFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+                label.new(bullFarTime, bullFarPrice, text="D", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
         else if bullFullClean
             bullFarBar   := touchPivotBarIdx
+            bullFarTime  := touchPivotBarTime
             bullFarPrice := touchPivotLowVal
             trackingBull := true
             if showDebug
-                label.new(bullFarBar, bullFarPrice, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+                label.new(bullFarTime, bullFarPrice, text="+", xloc=xloc.bar_time, style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
         else
             if showDebug
                 label.new(touchPivotBarIdx, touchPivotLowVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
@@ -268,12 +304,14 @@ if trendState == 1 and not na(touchPivotLowVal)
 if trendState == -1 and not na(touchPivotHighVal)
     if na(bearOriginBar)
         bearOriginBar   := touchPivotBarIdx
+        bearOriginTime  := touchPivotBarTime
         bearOriginPrice := touchPivotHighVal
         bearFarBar      := bearOriginBar
+        bearFarTime     := bearOriginTime
         bearFarPrice    := bearOriginPrice
         bearIsDivergent := false
         if showDebug
-            label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            label.new(bearOriginTime, bearOriginPrice, text="H", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if touchPivotHighVal < bearFarPrice
         bearEstSlope      = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
         bearProjected     = bearFarPrice + bearEstSlope * (touchPivotBarIdx - bearFarBar)
@@ -285,18 +323,21 @@ if trendState == -1 and not na(touchPivotHighVal)
             bearLine        := na
             bearIsDivergent := true
             bearOriginBar   := bearFarBar
+            bearOriginTime  := bearFarTime
             bearOriginPrice := bearFarPrice
             bearFarBar      := touchPivotBarIdx
+            bearFarTime     := touchPivotBarTime
             bearFarPrice    := touchPivotHighVal
             trackingBear    := true
             if showDebug
-                label.new(bearFarBar, bearFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+                label.new(bearFarTime, bearFarPrice, text="D", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
         else if bearFullClean
             bearFarBar   := touchPivotBarIdx
+            bearFarTime  := touchPivotBarTime
             bearFarPrice := touchPivotHighVal
             trackingBear := true
             if showDebug
-                label.new(bearFarBar, bearFarPrice, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+                label.new(bearFarTime, bearFarPrice, text="+", xloc=xloc.bar_time, style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
         else
             if showDebug
                 label.new(touchPivotBarIdx, touchPivotHighVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
@@ -349,7 +390,7 @@ if trendState == 1 and not na(bullOriginBar)
         // signal if a real line actually existed to break.
         if bullHasLine
             if freezeExtendBars > 0
-                line.set_xy2(bullLine, bar_index + freezeExtendBars, bullProjectedNow + bullSlope * freezeExtendBars)
+                line.set_xy2(bullLine, time + freezeExtendBars * timeframe.in_seconds() * 1000, bullProjectedNow + bullSlope * freezeExtendBars)
             bullBreak := true
             pendingShortActive := true
             pendingShortLevel  := bullProjectedNow
@@ -360,21 +401,25 @@ if trendState == 1 and not na(bullOriginBar)
         trackingBull    := false
         bullLine        := na
         bullOriginBar   := na
+        bullOriginTime  := na
         bullOriginPrice := na
         bullFarBar      := na
+        bullFarTime     := na
         bullFarPrice    := na
         trendState      := -1
         bearOriginBar   := lastPivotHighBar
+        bearOriginTime  := lastPivotHighTime
         bearOriginPrice := lastPivotHigh
         bearFarBar      := bearOriginBar
+        bearFarTime     := bearOriginTime
         bearFarPrice    := bearOriginPrice
         bearIsDivergent := false
         trackingBear    := false
         bearLine        := na
         if showDebug
             label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-            if not na(bearOriginBar)
-                label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            if not na(bearOriginTime)
+                label.new(bearOriginTime, bearOriginPrice, text="H", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if bullIntrudesNow
         // A line is one continuous straight segment between two points --
         // there's no such thing as "skip drawing through just this one
@@ -397,9 +442,9 @@ if trendState == 1 and not na(bullOriginBar)
             label.new(bar_index, low, text="REACT", style=label.style_circle, color=color.new(bullColor, 40), textcolor=color.white, size=size.tiny)
         bullLineColor = bullIsDivergent ? bullDivergeColor : bullColor
         if na(bullLine)
-            bullLine := line.new(bullOriginBar, bullOriginPrice, bar_index, bullProjectedNow, extend=extend.none, color=bullLineColor, width=2)
+            bullLine := line.new(bullOriginTime, bullOriginPrice, time, bullProjectedNow, xloc=xloc.bar_time, extend=extend.none, color=bullLineColor, width=2)
         else
-            line.set_xy2(bullLine, bar_index, bullProjectedNow)
+            line.set_xy2(bullLine, time, bullProjectedNow)
 
 if trendState == -1 and not na(bearOriginBar)
     bearHasLine      = trackingBear and not na(bearLine)
@@ -413,7 +458,7 @@ if trendState == -1 and not na(bearOriginBar)
         // See the symmetric comment in the bullish block above.
         if bearHasLine
             if freezeExtendBars > 0
-                line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
+                line.set_xy2(bearLine, time + freezeExtendBars * timeframe.in_seconds() * 1000, bearProjectedNow + bearSlope * freezeExtendBars)
             bearBreak := true
             pendingLongActive := true
             pendingLongLevel  := bearProjectedNow
@@ -424,21 +469,25 @@ if trendState == -1 and not na(bearOriginBar)
         trackingBear    := false
         bearLine        := na
         bearOriginBar   := na
+        bearOriginTime  := na
         bearOriginPrice := na
         bearFarBar      := na
+        bearFarTime     := na
         bearFarPrice    := na
         trendState      := 1
         bullOriginBar   := lastPivotLowBar
+        bullOriginTime  := lastPivotLowTime
         bullOriginPrice := lastPivotLow
         bullFarBar      := bullOriginBar
+        bullFarTime     := bullOriginTime
         bullFarPrice    := bullOriginPrice
         bullIsDivergent := false
         trackingBull    := false
         bullLine        := na
         if showDebug
             label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-            if not na(bullOriginBar)
-                label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+            if not na(bullOriginTime)
+                label.new(bullOriginTime, bullOriginPrice, text="L", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if bearIntrudesNow
         trackingBear := false
         bearLine     := na
@@ -449,9 +498,9 @@ if trendState == -1 and not na(bearOriginBar)
             label.new(bar_index, high, text="REACT", style=label.style_circle, color=color.new(bearColor, 40), textcolor=color.white, size=size.tiny)
         bearLineColor = bearIsDivergent ? bearDivergeColor : bearColor
         if na(bearLine)
-            bearLine := line.new(bearOriginBar, bearOriginPrice, bar_index, bearProjectedNow, extend=extend.none, color=bearLineColor, width=2)
+            bearLine := line.new(bearOriginTime, bearOriginPrice, time, bearProjectedNow, xloc=xloc.bar_time, extend=extend.none, color=bearLineColor, width=2)
         else
-            line.set_xy2(bearLine, bar_index, bearProjectedNow)
+            line.set_xy2(bearLine, time, bearProjectedNow)
 
 // Backtest-confirmation watches: after a break, watch the broken level for
 // up to backtestBars. If price comes back to test it (within
