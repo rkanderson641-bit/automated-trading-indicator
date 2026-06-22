@@ -191,6 +191,22 @@ version of this script:
   exactly when this should fire most often, not be blocked. A line can
   also branch this way purely because continuing the original line
   stopped being clean — not just because of steepness.
+- **Regime state, decoupled from pivot ratcheting**: exactly one direction
+  (bullish leg, bearish leg, or neither yet) is active at a time, and it
+  only changes in two places — the very first decisive break at startup,
+  or an actual break of whatever is currently active in that direction (a
+  pending single touch point with no line yet, or a real 2+ point line).
+  It does **not** change in response to a fresh "did price cross the most
+  recent swing pivot" check every bar, because that pivot ratchets to the
+  newest confirmed swing regardless of whether it's higher or lower than
+  the one before it — during a choppy decline, each minor bounce drags
+  that threshold down, making it progressively easier for the next small
+  bounce to falsely trigger a regime flip and wipe out a perfectly good
+  in-progress line. That one bug produced two symptoms that looked
+  unrelated: a fan of short branches all sharing one stale origin (every
+  false flip re-grabbing the same old swing point), and long blank
+  stretches (a line repeatedly killed before it ever earned a second touch
+  point).
 - **Reactions vs. real breaks**: a wick can cross a line while the candle's
   close stays on the correct side — that's a reaction (`REACT` marker, the
   line held), not a break. A real break only happens when CLOSE moves

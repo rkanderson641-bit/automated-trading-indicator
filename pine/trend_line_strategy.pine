@@ -50,10 +50,27 @@ showDebug        = input.bool(true, "Show debug markers (touch points)", group="
 // A line only ever touches WICKS, never closes through a candle body --
 // this is checked, not assumed.
 //
+// Regime state: exactly one of {none yet, bullish leg active, bearish leg
+// active} at any time, and it only ever changes in two places: the very
+// first decisive break at startup, or an actual break of whatever is
+// currently active in that direction (a pending single touch point with
+// no line yet, or a real 2+ point line). It does NOT change in response
+// to a generic "price broke some recent pivot" check recomputed fresh
+// every bar -- that was tried and was too twitchy. A confirmed pivot
+// ratchets to the MOST RECENT pivot of that type regardless of whether
+// it's higher or lower than the previous one, so during a choppy decline
+// a tiny countertrend bounce could exceed a recently-lowered pivot and
+// falsely flip the regime, wiping out a perfectly good in-progress line
+// and restarting from scratch. That produced two symptoms from one bug: a
+// fan of short branches all sharing one stale origin (every false flip
+// re-grabbing the same old swing point) and long blank stretches (a line
+// repeatedly killed before it ever earned a second touch point).
+//
 // Reactions vs. real breaks: a wick can cross a line while the candle's
 // close stays on the correct side -- that's a reaction (the line held),
 // not a break. A real break only happens when CLOSE moves through the
-// line by more than the ATR margin.
+// line (or, for a not-yet-confirmed origin, through that origin price) by
+// more than the ATR margin.
 //
 // Confirmation via backtest: when a line genuinely breaks, that's a
 // potential reversal, but it can fake out. So instead of signaling
@@ -88,6 +105,10 @@ touchPivotHighVal = ta.pivothigh(high, touchBars, touchBars)
 touchPivotLowVal  = ta.pivotlow(low, touchBars, touchBars)
 touchPivotBarIdx  = bar_index - touchBars
 
+// lastPivotHigh/lastPivotLow ratchet to the MOST RECENT confirmed swing
+// pivot, regardless of current trend state or whether it's higher/lower
+// than the previous one -- used only to seed a new origin the moment a
+// regime change happens, never to trigger that change itself.
 var float lastPivotHigh    = na
 var int   lastPivotHighBar = na
 var float lastPivotLow     = na
@@ -103,25 +124,11 @@ if not na(pivotLowVal)
 
 atrVal = ta.atr(atrLen)
 
-var float breakLastHigh   = na
-var float breakLastLow    = na
-var bool  hadBullishBreak = false
-var bool  hadBearishBreak = false
-
-// breakLastHigh/breakLastLow always ratchet to the most recent confirmed
-// pivot, regardless of current trend state -- used only to establish
-// overall directional bias (which pivot type to anchor on), never to end
-// an already-active line.
-if not na(pivotHighVal)
-    breakLastHigh := pivotHighVal
-if not na(pivotLowVal)
-    breakLastLow := pivotLowVal
-
-bullishBreakNowRaw = not na(breakLastHigh) and close > breakLastHigh + atrVal * minBreakAtrMult
-bearishBreakNowRaw = not na(breakLastLow) and close < breakLastLow - atrVal * minBreakAtrMult
-
-bullishBreakNow = bullishBreakNowRaw
-bearishBreakNow = bearishBreakNowRaw and not bullishBreakNowRaw
+// trendState: 0 = no direction established yet, 1 = bullish leg active,
+// -1 = bearish leg active. See the "Regime state" comment above for why
+// this only ever changes at startup or at an actual break of whatever is
+// currently active -- never from lastPivotHigh/lastPivotLow directly.
+var int trendState = 0
 
 var line bullLine = na
 var line bearLine = na
@@ -157,42 +164,36 @@ bearBreak     = false
 confirmedLong  = false
 confirmedShort = false
 
-if bullishBreakNow
-    freshBullStart  = not hadBullishBreak
-    breakLastHigh   := close
-    hadBullishBreak := true
-    hadBearishBreak := false
-    if showDebug
-        label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-    if freshBullStart
+// Startup only: pick the very first direction off a decisive break of the
+// most recent confirmed pivot. Once trendState is non-zero, this never
+// runs again -- all later direction changes come from the break checks
+// further down, against whatever is actually being tracked.
+if trendState == 0
+    bootstrapBullBreak = not na(lastPivotHigh) and close > lastPivotHigh + atrVal * minBreakAtrMult
+    bootstrapBearBreak = not na(lastPivotLow) and close < lastPivotLow - atrVal * minBreakAtrMult
+    if bootstrapBullBreak and not bootstrapBearBreak
+        trendState      := 1
         bullOriginBar   := lastPivotLowBar
         bullOriginPrice := lastPivotLow
         bullFarBar      := bullOriginBar
         bullFarPrice    := bullOriginPrice
         bullIsDivergent := false
         trackingBull    := false
-        // Forget (don't delete) the previous leg's line -- it stays on
-        // the chart as permanent history of that completed leg.
-        bullLine := na
+        bullLine        := na
         if showDebug
+            label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
             label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-
-if bearishBreakNow
-    freshBearStart  = not hadBearishBreak
-    breakLastLow    := close
-    hadBearishBreak := true
-    hadBullishBreak := false
-    if showDebug
-        label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
-    if freshBearStart
+    else if bootstrapBearBreak and not bootstrapBullBreak
+        trendState      := -1
         bearOriginBar   := lastPivotHighBar
         bearOriginPrice := lastPivotHigh
         bearFarBar      := bearOriginBar
         bearFarPrice    := bearOriginPrice
         bearIsDivergent := false
         trackingBear    := false
-        bearLine := na
+        bearLine        := na
         if showDebug
+            label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
             label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
 
 // Roll the far point forward on each new SAME-TYPE touch point that
@@ -213,7 +214,7 @@ if bearishBreakNow
 // cleanliness instead of slope). If neither the full line nor the short
 // one would stay clean, the touch point is ignored rather than drawn
 // through a body.
-if hadBullishBreak and not na(touchPivotLowVal)
+if trendState == 1 and not na(touchPivotLowVal)
     if na(bullOriginBar)
         bullOriginBar   := touchPivotBarIdx
         bullOriginPrice := touchPivotLowVal
@@ -252,7 +253,7 @@ if hadBullishBreak and not na(touchPivotLowVal)
         if showDebug
             label.new(touchPivotBarIdx, touchPivotLowVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
 
-if hadBearishBreak and not na(touchPivotHighVal)
+if trendState == -1 and not na(touchPivotHighVal)
     if na(bearOriginBar)
         bearOriginBar   := touchPivotBarIdx
         bearOriginPrice := touchPivotHighVal
@@ -310,33 +311,58 @@ if hadBearishBreak and not na(touchPivotHighVal)
 // and resume drawing immediately, rather than needing a whole new leg to
 // start from scratch. A wick crossing the line while close holds on the
 // correct side (the line sitting outside the body entirely) is a
-// REACTION, not an intrusion. A real break is CLOSE moving through the
-// line by more than the break margin -- that freezes the line (with a
-// small overshoot for visibility, never deleted) and opens a pending
-// backtest-confirmation watch instead of firing a signal immediately.
-if trackingBull and not na(bullOriginBar)
-    bullSlope        = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
-    bullProjectedNow = bullFarPrice + bullSlope * (bar_index - bullFarBar)
+// REACTION, not an intrusion.
+//
+// This block is also the ONLY place trendState flips away from bullish:
+// while there's no line yet (just a pending origin from one touch point),
+// the reference to break is a flat line at that origin price; once a real
+// 2+ point line exists, the reference is its projected slope, same as
+// before. Either way, a genuine close-through-the-reference break is what
+// it actually means for this direction to have failed -- not some
+// separately-recomputed pivot threshold that can drift around underneath
+// an otherwise-healthy line.
+if trendState == 1 and not na(bullOriginBar)
+    bullHasLine      = trackingBull and not na(bullLine)
+    bullSlope        = trackingBull and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
+    bullProjectedNow = trackingBull ? bullFarPrice + bullSlope * (bar_index - bullFarBar) : bullOriginPrice
     bullBreakMargin  = atrVal * minBreakAtrMult + math.abs(bullSlope) * touchBars
     bullBodyTop      = math.max(open, close)
     bullBodyBottom   = math.min(open, close)
-    bullIntrudesNow  = bullProjectedNow > bullBodyBottom and bullProjectedNow < bullBodyTop
+    bullIntrudesNow  = trackingBull and bullProjectedNow > bullBodyBottom and bullProjectedNow < bullBodyTop
     if close < bullProjectedNow - bullBreakMargin
-        if not na(bullLine) and freezeExtendBars > 0
-            line.set_xy2(bullLine, bar_index + freezeExtendBars, bullProjectedNow + bullSlope * freezeExtendBars)
+        // Whatever was active in this direction -- a real line, or just a
+        // pending single touch point that never earned a second one --
+        // has now genuinely failed. Flip to bearish, seeded from the most
+        // recent confirmed swing high, and only emit a tradeable break
+        // signal if a real line actually existed to break.
+        if bullHasLine
+            if freezeExtendBars > 0
+                line.set_xy2(bullLine, bar_index + freezeExtendBars, bullProjectedNow + bullSlope * freezeExtendBars)
+            bullBreak := true
+            pendingShortActive := true
+            pendingShortLevel  := bullProjectedNow
+            pendingShortBar    := bar_index
+            pendingShortTested := false
+            if showLabels
+                label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
         trackingBull    := false
-        bullBreak       := true
         bullLine        := na
         bullOriginBar   := na
         bullOriginPrice := na
         bullFarBar      := na
         bullFarPrice    := na
-        pendingShortActive := true
-        pendingShortLevel  := bullProjectedNow
-        pendingShortBar    := bar_index
-        pendingShortTested := false
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+        trendState      := -1
+        bearOriginBar   := lastPivotHighBar
+        bearOriginPrice := lastPivotHigh
+        bearFarBar      := bearOriginBar
+        bearFarPrice    := bearOriginPrice
+        bearIsDivergent := false
+        trackingBear    := false
+        bearLine        := na
+        if showDebug
+            label.new(bar_index, high, text="BREAK", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+            if not na(bearOriginBar)
+                label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if bullIntrudesNow
         // A line is one continuous straight segment between two points --
         // there's no such thing as "skip drawing through just this one
@@ -354,7 +380,7 @@ if trackingBull and not na(bullOriginBar)
         bullLine     := na
         if showDebug
             label.new(bar_index, bullBodyBottom, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
-    else
+    else if trackingBull
         if showReactions and low < bullProjectedNow and close >= bullProjectedNow
             label.new(bar_index, low, text="REACT", style=label.style_circle, color=color.new(bullColor, 40), textcolor=color.white, size=size.tiny)
         bullLineColor = bullIsDivergent ? bullDivergeColor : bullColor
@@ -363,40 +389,50 @@ if trackingBull and not na(bullOriginBar)
         else
             line.set_xy2(bullLine, bar_index, bullProjectedNow)
 
-if trackingBear and not na(bearOriginBar)
-    bearSlope        = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
-    bearProjectedNow = bearFarPrice + bearSlope * (bar_index - bearFarBar)
+if trendState == -1 and not na(bearOriginBar)
+    bearHasLine      = trackingBear and not na(bearLine)
+    bearSlope        = trackingBear and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
+    bearProjectedNow = trackingBear ? bearFarPrice + bearSlope * (bar_index - bearFarBar) : bearOriginPrice
     bearBreakMargin  = atrVal * minBreakAtrMult + math.abs(bearSlope) * touchBars
     bearBodyTop      = math.max(open, close)
     bearBodyBottom   = math.min(open, close)
-    bearIntrudesNow  = bearProjectedNow > bearBodyBottom and bearProjectedNow < bearBodyTop
+    bearIntrudesNow  = trackingBear and bearProjectedNow > bearBodyBottom and bearProjectedNow < bearBodyTop
     if close > bearProjectedNow + bearBreakMargin
-        if not na(bearLine) and freezeExtendBars > 0
-            line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
+        // See the symmetric comment in the bullish block above.
+        if bearHasLine
+            if freezeExtendBars > 0
+                line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
+            bearBreak := true
+            pendingLongActive := true
+            pendingLongLevel  := bearProjectedNow
+            pendingLongBar    := bar_index
+            pendingLongTested := false
+            if showLabels
+                label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
         trackingBear    := false
-        bearBreak       := true
         bearLine        := na
         bearOriginBar   := na
         bearOriginPrice := na
         bearFarBar      := na
         bearFarPrice    := na
-        pendingLongActive := true
-        pendingLongLevel  := bearProjectedNow
-        pendingLongBar    := bar_index
-        pendingLongTested := false
-        if showLabels
-            label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+        trendState      := 1
+        bullOriginBar   := lastPivotLowBar
+        bullOriginPrice := lastPivotLow
+        bullFarBar      := bullOriginBar
+        bullFarPrice    := bullOriginPrice
+        bullIsDivergent := false
+        trackingBull    := false
+        bullLine        := na
+        if showDebug
+            label.new(bar_index, low, text="BREAK", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+            if not na(bullOriginBar)
+                label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if bearIntrudesNow
-        // See the symmetric comment in the bullish block above -- this
-        // stops the line for good (drawing pauses), but leaves
-        // bearOriginBar/bearFarBar alone so the roll-forward block can
-        // still resume drawing the moment a genuinely clean touch point
-        // arrives, instead of needing a whole new leg from scratch.
         trackingBear := false
         bearLine     := na
         if showDebug
             label.new(bar_index, bearBodyTop, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
-    else
+    else if trackingBear
         if showReactions and high > bearProjectedNow and close <= bearProjectedNow
             label.new(bar_index, high, text="REACT", style=label.style_circle, color=color.new(bearColor, 40), textcolor=color.white, size=size.tiny)
         bearLineColor = bearIsDivergent ? bearDivergeColor : bearColor
@@ -446,15 +482,18 @@ if pendingLongActive
 // exact origin/far anchors and the resulting slope, so anchor placement
 // can be verified precisely instead of estimated from chart pixels.
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 3, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     bullDbgSlope = trackingBull and not na(bullOriginBar) and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : na
     bearDbgSlope = trackingBear and not na(bearOriginBar) and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : na
     bullDbgText  = trackingBull and not na(bullOriginBar) ? "o(" + str.tostring(bullOriginBar) + ", " + str.tostring(bullOriginPrice, format.mintick) + ")  f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####") + (bullIsDivergent ? "  [D]" : "") : "inactive"
     bearDbgText  = trackingBear and not na(bearOriginBar) ? "o(" + str.tostring(bearOriginBar) + ", " + str.tostring(bearOriginPrice, format.mintick) + ")  f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####") + (bearIsDivergent ? "  [D]" : "") : "inactive"
-    table.cell(dbgTable, 0, 0, "Bull", text_color=color.white, bgcolor=color.new(color.green, 60))
-    table.cell(dbgTable, 1, 0, bullDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
-    table.cell(dbgTable, 0, 1, "Bear", text_color=color.white, bgcolor=color.new(color.red, 60))
-    table.cell(dbgTable, 1, 1, bearDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    stateText    = trendState == 1 ? "BULL" : trendState == -1 ? "BEAR" : "none"
+    table.cell(dbgTable, 0, 0, "State", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 0, stateText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "Bull", text_color=color.white, bgcolor=color.new(color.green, 60))
+    table.cell(dbgTable, 1, 1, bullDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 2, "Bear", text_color=color.white, bgcolor=color.new(color.red, 60))
+    table.cell(dbgTable, 1, 2, bearDbgText, text_color=color.white, bgcolor=color.new(color.black, 15))
 
 alertcondition(bullBreak, title="Uptrend Line Broken", message="Price closed below an ascending support trend line")
 alertcondition(bearBreak, title="Downtrend Line Broken", message="Price closed above a descending resistance trend line")
