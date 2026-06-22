@@ -9,8 +9,9 @@ rsiSrc   = input.source(close, "RSI Source", group="RSI")
 maType   = input.string("SMA", "RSI MA Type", options=["SMA", "EMA"], group="RSI")
 maLen    = input.int(14, "RSI MA Length", minval=1, group="RSI")
 
-rsiUpper = input.float(70, "RSI Overbought Level", group="Raw RSI Thresholds")
-rsiLower = input.float(30, "RSI Oversold Level", group="Raw RSI Thresholds")
+rsiUpper      = input.float(70, "RSI Overbought Level", group="Raw RSI Thresholds")
+rsiLower      = input.float(30, "RSI Oversold Level", group="Raw RSI Thresholds")
+rsiResetLevel = input.float(50, "Raw RSI Re-arm Level (midline)", minval=0, maxval=100, group="Raw RSI Thresholds")
 
 maUpper  = input.float(65, "RSI MA Upper Approach Level", group="RSI MA Thresholds")
 maLower  = input.float(35, "RSI MA Lower Approach Level", group="RSI MA Thresholds")
@@ -34,14 +35,37 @@ showDebug = input.bool(true, "Show live RSI/MA debug readout", group="Debug")
 // rather than touching 70/30) rather than assumed. Both signals fire the
 // instant their line crosses its threshold, once per crossing -- they don't
 // repeat every bar while the line stays beyond it.
+//
+// Raw RSI is noisy enough to whip back and forth across 70/30 several times
+// during a single extended move, so a plain crossover/crossunder re-fires on
+// every little wiggle (the smoothed MA doesn't have this problem, since it
+// rarely re-crosses its own threshold without a real pullback first). To
+// match that steadier MA behavior, the raw-RSI signal is re-armed only after
+// RSI travels back through the midline (`rsiResetLevel`) -- once
+// "Overextended" fires, it can't fire again until RSI dips back below the
+// midline and makes a fresh run up through 70 (same idea, mirrored, for
+// "Underextended").
 // ---------------------------------------------------------------------------
 rsiVal = ta.rsi(rsiSrc, rsiLen)
 maVal  = maType == "EMA" ? ta.ema(rsiVal, maLen) : ta.sma(rsiVal, maLen)
 
-overExtended  = ta.crossover(rsiVal, rsiUpper)
-underExtended = ta.crossunder(rsiVal, rsiLower)
+var bool overArmed  = true
+var bool underArmed = true
+
+if ta.crossunder(rsiVal, rsiResetLevel)
+    overArmed := true
+if ta.crossover(rsiVal, rsiResetLevel)
+    underArmed := true
+
+overExtended  = overArmed and ta.crossover(rsiVal, rsiUpper)
+underExtended = underArmed and ta.crossunder(rsiVal, rsiLower)
 maOver        = ta.crossover(maVal, maUpper)
 maUnder       = ta.crossunder(maVal, maLower)
+
+if overExtended
+    overArmed := false
+if underExtended
+    underArmed := false
 
 atrVal     = ta.atr(14)
 nearOffset = atrVal * labelOffsetAtrMult
@@ -62,13 +86,19 @@ if maUnder
     label.new(bar_index, low - farOffset, text="MA Underextension", style=label.style_label_up, color=color.new(maUnderColor, 0), textcolor=color.black, size=size.small)
 
 // Live numeric readout so the MA approach levels above can be tuned against
-// real values instead of estimating them from chart pixels.
+// real values instead of estimating them from chart pixels. Also shows the
+// raw-RSI re-arm state so the hysteresis above can be verified directly
+// instead of inferred from label spacing.
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "RSI", text_color=color.white, bgcolor=color.new(color.purple, 60))
     table.cell(dbgTable, 1, 0, str.tostring(rsiVal, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "RSI MA", text_color=color.white, bgcolor=color.new(color.yellow, 60))
     table.cell(dbgTable, 1, 1, str.tostring(maVal, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 2, "Over Re-arm", text_color=color.white, bgcolor=color.new(color.red, 60))
+    table.cell(dbgTable, 1, 2, overArmed ? "armed" : "cooling down", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 3, "Under Re-arm", text_color=color.white, bgcolor=color.new(color.green, 60))
+    table.cell(dbgTable, 1, 3, underArmed ? "armed" : "cooling down", text_color=color.white, bgcolor=color.new(color.black, 15))
 
 alertcondition(overExtended, title="RSI Overextended", message="RSI crossed above the overbought level -- prep short")
 alertcondition(underExtended, title="RSI Underextended", message="RSI crossed below the oversold level -- prep long")
