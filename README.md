@@ -170,10 +170,13 @@ version of this script:
   is clean, the touch point is ignored. On top of that, every single bar
   — even quiet ones with no new touch point — the line's projection to
   "today" is checked against today's candle too, since a fixed slope can
-  drift into a body over many bars just as easily as a bad update can; if
-  it would, the line stops right there (a `CLIP` debug marker) rather
-  than being drawn through it, and the leg restarts fresh from whatever
-  touch point comes next.
+  drift into a body over many bars just as easily as a bad update can. If
+  it would, rendering is simply skipped for that one bar (a `CLIP` debug
+  marker) — the line and its anchors are left exactly as they are rather
+  than torn down, since intrusion on a single bar is almost always a
+  one-bar coincidence rather than proof the anchor has gone bad; tearing
+  it down on every such bar left visible gaps in otherwise-clean trends
+  and erased the very line a genuine divergence needed to compare against.
 - **Branching**: when a new touch point continues the structure but lands
   meaningfully beyond where the existing line already projects (steeper
   than expected — `Divergence sensitivity margin`), the existing line
