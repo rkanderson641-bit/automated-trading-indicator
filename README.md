@@ -160,29 +160,36 @@ version of this script:
   Lookback/Lookahead Bars` (narrower, default 3) finds the touch points
   that roll a line's far point forward, since a single wide lookback is
   too strict to catch every real touch during a fast or choppy move.
-- **Pending legs re-anchor instead of getting stuck**: before a leg has
-  earned its second touch point, the single pending point's only
-  cleanliness check is against itself — there's no separate far point to
-  fall back on the way an active line's branch provides. Left alone,
-  that span only grows the longer a leg stays unconfirmed, making
-  confirmation progressively less likely with no way to recover (this
-  was observed live: a leg sat pending for 580 bars while price clearly
-  trended, because every candidate touch point had to connect cleanly
-  all the way back to an origin that kept getting more distant). So a
-  touch point that fails to confirm the pending leg re-anchors the single
-  point to itself instead of being discarded, keeping the span short and
-  confirmation achievable.
+- **A leg with nothing currently drawn resumes or resets, never stays
+  stuck**: this covers two states that look different but share one
+  trap — a leg that never earned its second touch point (pending, far ==
+  origin), and a leg that did, then froze on an intrusion and never
+  found a clean touch point to resume with (frozen, far is stale but
+  distinct from origin). Whichever anchor a new touch point has to
+  connect to cleanly only gets harder to reach the longer nothing
+  updates, with no escape hatch the way an actively-drawing line's
+  branch provides. (Observed live, twice: a pending leg sat unconfirmed
+  for 580 bars; fixing only that case left a frozen leg undetected,
+  since its far point alone went stale for 10000+ bars instead, invisible
+  until pending and frozen were shown as distinct debug states.) So a
+  touch point first tries to resume using the existing far point — the
+  same short-span check an active line's branch would use; if that also
+  fails, it fully resets to a fresh single point at this touch instead of
+  leaving increasingly stale state behind. Nothing is visibly drawn in
+  either state, so there's nothing lost by resetting.
 - **Wick-only, checked continuously, not just at branch points**: once a
-  leg is active (2+ points), every touch point that continues the
-  structure is only accepted if the resulting line stays clear of every
-  candle body the ENTIRE way from origin to that point — not just its
-  newest segment. If extending the existing line that far would cut into
-  some earlier candle's body, a fresh, shorter line anchored from just
-  the last touch point onward is used instead, provided that shorter
-  line is itself clean; if neither is clean, the touch point is ignored
-  (this is the active-line equivalent of the pending leg's re-anchoring
-  above — the branch IS its escape hatch from a dirty full history). On
-  top of that, every single bar
+  leg is actually active (currently drawing a real line), every touch
+  point that continues the structure is only accepted if the resulting
+  line stays clear of every candle body the ENTIRE way from origin to
+  that point — not just its newest segment. If extending the existing
+  line that far would cut into some earlier candle's body, a fresh,
+  shorter line anchored from just the last touch point onward is used
+  instead, provided that shorter line is itself clean; if neither is
+  clean, the touch point is ignored (this is the active-line equivalent
+  of the resume/reset above — the branch IS its escape hatch from a dirty
+  full history; a currently-drawing line's far point is fresh by
+  construction, so it can't accumulate the same staleness). On top of
+  that, every single bar
   — even quiet ones with no new touch point — the line's projection to
   "today" is checked against today's candle too, since a fixed slope can
   drift into a body over many bars just as easily as a bad update can. A

@@ -262,31 +262,38 @@ if trendState == 0
 // trend line exists by definition and starts being drawn -- no RSI or any
 // other gate involved.
 //
-// While a leg is still PENDING (only one point so far, far == origin),
-// failing to continue is NOT simply ignored -- the single pending point
-// re-anchors to the failed touch point instead. A pending leg has no
-// distinct far point to branch back to the way an active line does, so
-// its only cleanliness check is against the ORIGINAL point -- and that
-// span only ever grows the longer it stays unconfirmed, making
-// confirmation progressively less likely the longer it takes, with no
-// way to recover (this was confirmed live: a leg sat pending for 580
-// bars while price clearly trended, because every candidate touch point
-// had to connect cleanly all the way back to a point that just kept
-// getting more distant). Re-anchoring keeps that span short, so
-// confirmation gets easier over time instead of harder.
+// Whenever NOTHING is currently being drawn (not trackingBull/Bear) --
+// either this leg never earned a second point (pending, far == origin),
+// or it did but later froze on an intrusion and never found a clean
+// touch point to resume with -- failing to continue is NOT simply
+// ignored. Both are the same trap: whichever anchor a new touch has to
+// connect to cleanly only gets harder to reach the longer nothing
+// updates (this was confirmed live, twice: first a pending leg sat
+// unconfirmed for 580 bars; fixing only that case left a FROZEN leg
+// undetected, since "not tracking" was being read as "must be pending,"
+// and its far point alone went stale for 10000+ bars instead, completely
+// invisible until the debug table's [pending]/[frozen] tags were split
+// apart). So a touch point first tries to resume using the EXISTING far
+// point (the same short-span check an active line's branch would use --
+// for a still-pending leg, far == origin, so this is the same check
+// either way); if that also fails, it fully resets to a fresh single
+// point at this touch instead of leaving increasingly stale state
+// behind. Nothing is visibly drawn in either state, so there's nothing
+// lost by resetting.
 //
-// Once a leg is ACTIVE (2+ points), a touch point that DOES continue
-// only ever gets accepted if the resulting line stays wick-only the
-// ENTIRE way from origin to this new point -- not just the newest
-// segment. If extending the existing line that far would cut into some
-// earlier candle's body, but anchoring a fresh, shorter line from just
-// the last touch point to this new one would stay clean, that shorter
-// line is used instead (the same lighter "divergent" styling as a
-// steepening branch, just triggered by cleanliness instead of slope). If
-// neither the full line nor the short one would stay clean, the touch
-// point is ignored rather than drawn through a body -- an active line's
-// branch IS its escape hatch from a dirty full history, unlike a
-// pending leg.
+// Once a leg is ACTUALLY ACTIVE (currently tracking, drawing a real
+// line), a touch point that DOES continue only ever gets accepted if the
+// resulting line stays wick-only the ENTIRE way from origin to this new
+// point -- not just the newest segment. If extending the existing line
+// that far would cut into some earlier candle's body, but anchoring a
+// fresh, shorter line from just the last touch point to this new one
+// would stay clean, that shorter line is used instead (the same
+// lighter "divergent" styling as a steepening branch, just triggered by
+// cleanliness instead of slope). If neither the full line nor the short
+// one would stay clean, the touch point is ignored rather than drawn
+// through a body -- a currently-drawing line's far point is fresh by
+// construction (it only got there by continuously updating), so this
+// can't accumulate the same staleness the not-tracking case can.
 if trendState == 1 and not na(touchPivotLowVal)
     if na(bullOriginBar)
         bullOriginBar   := touchPivotBarIdx
@@ -298,14 +305,30 @@ if trendState == 1 and not na(touchPivotLowVal)
         bullIsDivergent := false
         if showDebug
             label.new(bullOriginTime, bullOriginPrice, text="L", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-    else if bullFarBar == bullOriginBar
-        bullPendingRun   = touchPivotBarIdx - bullOriginBar >= touchBars
-        bullPendingClean = not lineEntersBody(bullOriginBar, bullOriginPrice, touchPivotBarIdx, touchPivotLowVal)
-        if touchPivotLowVal > bullOriginPrice and bullPendingRun and bullPendingClean
-            bullFarBar   := touchPivotBarIdx
-            bullFarTime  := touchPivotBarTime
-            bullFarPrice := touchPivotLowVal
-            trackingBull := true
+    else if not trackingBull
+        // Nothing is currently being drawn -- either this leg never
+        // earned a second point (pending, far == origin), or it did but
+        // later froze on an intrusion and never found a clean touch
+        // point to resume with. Both are the same trap: whichever anchor
+        // a new touch has to connect to cleanly only gets harder to
+        // reach the longer nothing updates. So try to resume using the
+        // EXISTING far point first (the same short-span check an active
+        // line's branch would use -- for a still-pending leg, far ==
+        // origin, so this is the same check either way); if that also
+        // fails, fully reset to a fresh single point at this touch
+        // instead of leaving increasingly stale state behind. Nothing is
+        // visibly drawn right now either way, so there's nothing to lose
+        // by resetting.
+        bullResumeRun   = touchPivotBarIdx - bullFarBar >= touchBars
+        bullResumeClean = not lineEntersBody(bullFarBar, bullFarPrice, touchPivotBarIdx, touchPivotLowVal)
+        if touchPivotLowVal > bullFarPrice and bullResumeRun and bullResumeClean
+            bullOriginBar   := bullFarBar
+            bullOriginTime  := bullFarTime
+            bullOriginPrice := bullFarPrice
+            bullFarBar      := touchPivotBarIdx
+            bullFarTime     := touchPivotBarTime
+            bullFarPrice    := touchPivotLowVal
+            trackingBull    := true
             if showDebug
                 label.new(bullFarTime, bullFarPrice, text="+", xloc=xloc.bar_time, style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
         else
@@ -359,14 +382,18 @@ if trendState == -1 and not na(touchPivotHighVal)
         bearIsDivergent := false
         if showDebug
             label.new(bearOriginTime, bearOriginPrice, text="H", xloc=xloc.bar_time, style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
-    else if bearFarBar == bearOriginBar
-        bearPendingRun   = touchPivotBarIdx - bearOriginBar >= touchBars
-        bearPendingClean = not lineEntersBody(bearOriginBar, bearOriginPrice, touchPivotBarIdx, touchPivotHighVal)
-        if touchPivotHighVal < bearOriginPrice and bearPendingRun and bearPendingClean
-            bearFarBar   := touchPivotBarIdx
-            bearFarTime  := touchPivotBarTime
-            bearFarPrice := touchPivotHighVal
-            trackingBear := true
+    else if not trackingBear
+        // See the symmetric comment in the bullish block above.
+        bearResumeRun   = touchPivotBarIdx - bearFarBar >= touchBars
+        bearResumeClean = not lineEntersBody(bearFarBar, bearFarPrice, touchPivotBarIdx, touchPivotHighVal)
+        if touchPivotHighVal < bearFarPrice and bearResumeRun and bearResumeClean
+            bearOriginBar   := bearFarBar
+            bearOriginTime  := bearFarTime
+            bearOriginPrice := bearFarPrice
+            bearFarBar      := touchPivotBarIdx
+            bearFarTime     := touchPivotBarTime
+            bearFarPrice    := touchPivotHighVal
+            trackingBear    := true
             if showDebug
                 label.new(bearFarTime, bearFarPrice, text="+", xloc=xloc.bar_time, style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
         else
@@ -619,14 +646,26 @@ if showDebug and barstate.islast
     // margin) apart from something else going wrong (e.g. dist already
     // past margin with no break firing, which would point to a real bug
     // rather than expected behavior).
-    bullDbgSlope = trackingBull and not na(bullOriginBar) and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : na
-    bearDbgSlope = trackingBear and not na(bearOriginBar) and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : na
+    // "[pending]" (far == origin, never confirmed a second point) and
+    // "[frozen]" (2+ points, but currently paused by an intrusion) used
+    // to both collapse to the same "[pending]" tag here -- that hid the
+    // fact that a frozen line's far point can go just as stale as a
+    // pending origin can, which is exactly the bug this distinction
+    // caught: a leg that looked "pending" was actually frozen with a
+    // 10000+ bar-old far point that the active branch logic alone could
+    // never recover from.
+    bullDbgSlope = not na(bullOriginBar) and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : na
+    bearDbgSlope = not na(bearOriginBar) and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : na
     bullAge      = na(bullOriginBar) ? na : bar_index - bullOriginBar
     bearAge      = na(bearOriginBar) ? na : bar_index - bearOriginBar
     bullDist     = na(bullRefDbg) ? na : close - bullRefDbg
     bearDist     = na(bearRefDbg) ? na : close - bearRefDbg
-    bullDbgText  = na(bullOriginBar) ? "no origin" : (trackingBull ? "[tracking] f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####") : "[pending]") + "  age=" + str.tostring(bullAge) + "  dist=" + str.tostring(bullDist, format.mintick) + "/" + str.tostring(bullMarginDbg, format.mintick) + (bullIsDivergent ? "  [D]" : "")
-    bearDbgText  = na(bearOriginBar) ? "no origin" : (trackingBear ? "[tracking] f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####") : "[pending]") + "  age=" + str.tostring(bearAge) + "  dist=" + str.tostring(bearDist, format.mintick) + "/" + str.tostring(bearMarginDbg, format.mintick) + (bearIsDivergent ? "  [D]" : "")
+    bullStateTag = trackingBull ? "tracking" : bullFarBar == bullOriginBar ? "pending" : "frozen"
+    bearStateTag = trackingBear ? "tracking" : bearFarBar == bearOriginBar ? "pending" : "frozen"
+    bullFarInfo  = na(bullOriginBar) or bullFarBar == bullOriginBar ? "" : "  f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####")
+    bearFarInfo  = na(bearOriginBar) or bearFarBar == bearOriginBar ? "" : "  f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####")
+    bullDbgText  = na(bullOriginBar) ? "no origin" : "[" + bullStateTag + "]" + bullFarInfo + "  age=" + str.tostring(bullAge) + "  dist=" + str.tostring(bullDist, format.mintick) + "/" + str.tostring(bullMarginDbg, format.mintick) + (bullIsDivergent ? "  [D]" : "")
+    bearDbgText  = na(bearOriginBar) ? "no origin" : "[" + bearStateTag + "]" + bearFarInfo + "  age=" + str.tostring(bearAge) + "  dist=" + str.tostring(bearDist, format.mintick) + "/" + str.tostring(bearMarginDbg, format.mintick) + (bearIsDivergent ? "  [D]" : "")
     stateText    = trendState == 1 ? "BULL" : trendState == -1 ? "BEAR" : "none"
     // Backtest-watch status -- shows directly whether a bearish leg ever
     // becomes a real line (hasLine) before breaking up, and whether the
