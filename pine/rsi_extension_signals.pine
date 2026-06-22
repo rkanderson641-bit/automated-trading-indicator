@@ -1,0 +1,76 @@
+//@version=6
+indicator("RSI Extension Signals", overlay=true, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+rsiLen   = input.int(14, "RSI Length", minval=1, group="RSI")
+rsiSrc   = input.source(close, "RSI Source", group="RSI")
+maType   = input.string("SMA", "RSI MA Type", options=["SMA", "EMA"], group="RSI")
+maLen    = input.int(14, "RSI MA Length", minval=1, group="RSI")
+
+rsiUpper = input.float(70, "RSI Overbought Level", group="Raw RSI Thresholds")
+rsiLower = input.float(30, "RSI Oversold Level", group="Raw RSI Thresholds")
+
+maUpper  = input.float(65, "RSI MA Upper Approach Level", group="RSI MA Thresholds")
+maLower  = input.float(35, "RSI MA Lower Approach Level", group="RSI MA Thresholds")
+
+overColor    = input.color(color.red, "Overextended Label Color", group="Style")
+underColor   = input.color(color.green, "Underextended Label Color", group="Style")
+maOverColor  = input.color(color.yellow, "MA Overextension Label Color", group="Style")
+maUnderColor = input.color(color.aqua, "MA Underextension Label Color", group="Style")
+labelOffsetAtrMult = input.float(0.5, "Label Offset (x ATR)", minval=0, step=0.1, group="Style")
+
+showDebug = input.bool(true, "Show live RSI/MA debug readout", group="Debug")
+
+// ---------------------------------------------------------------------------
+// A raw RSI cross above the overbought level means the move has overextended
+// to the upside (short prep, red); a cross below the oversold level means
+// it's overextended to the downside (long prep, green). The RSI-based MA
+// (SMA/EMA of RSI, matching TradingView's built-in "RSI-based MA" plot) is
+// smoothed and rarely reaches the same 70/30 band, so it gets its own,
+// closer "approach" thresholds instead of reusing the raw RSI band -- tuned
+// from real chart examples (where the MA topped in the mid-60s/mid-30s
+// rather than touching 70/30) rather than assumed. Both signals fire the
+// instant their line crosses its threshold, once per crossing -- they don't
+// repeat every bar while the line stays beyond it.
+// ---------------------------------------------------------------------------
+rsiVal = ta.rsi(rsiSrc, rsiLen)
+maVal  = maType == "EMA" ? ta.ema(rsiVal, maLen) : ta.sma(rsiVal, maLen)
+
+overExtended  = ta.crossover(rsiVal, rsiUpper)
+underExtended = ta.crossunder(rsiVal, rsiLower)
+maOver        = ta.crossover(maVal, maUpper)
+maUnder       = ta.crossunder(maVal, maLower)
+
+atrVal     = ta.atr(14)
+nearOffset = atrVal * labelOffsetAtrMult
+farOffset  = atrVal * labelOffsetAtrMult * 3
+
+// Raw-RSI labels sit close to the bar; MA labels sit further out so the two
+// don't overlap when both fire on the same bar.
+if overExtended
+    label.new(bar_index, high + nearOffset, text="Overextended", style=label.style_label_down, color=color.new(overColor, 0), textcolor=color.white, size=size.small)
+
+if underExtended
+    label.new(bar_index, low - nearOffset, text="Underextended", style=label.style_label_up, color=color.new(underColor, 0), textcolor=color.white, size=size.small)
+
+if maOver
+    label.new(bar_index, high + farOffset, text="MA Overextension", style=label.style_label_down, color=color.new(maOverColor, 0), textcolor=color.black, size=size.small)
+
+if maUnder
+    label.new(bar_index, low - farOffset, text="MA Underextension", style=label.style_label_up, color=color.new(maUnderColor, 0), textcolor=color.black, size=size.small)
+
+// Live numeric readout so the MA approach levels above can be tuned against
+// real values instead of estimating them from chart pixels.
+if showDebug and barstate.islast
+    var table dbgTable = table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    table.cell(dbgTable, 0, 0, "RSI", text_color=color.white, bgcolor=color.new(color.purple, 60))
+    table.cell(dbgTable, 1, 0, str.tostring(rsiVal, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "RSI MA", text_color=color.white, bgcolor=color.new(color.yellow, 60))
+    table.cell(dbgTable, 1, 1, str.tostring(maVal, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 15))
+
+alertcondition(overExtended, title="RSI Overextended", message="RSI crossed above the overbought level -- prep short")
+alertcondition(underExtended, title="RSI Underextended", message="RSI crossed below the oversold level -- prep long")
+alertcondition(maOver, title="RSI MA Overextension", message="RSI-based MA crossed above its upper approach level -- prep short")
+alertcondition(maUnder, title="RSI MA Underextension", message="RSI-based MA crossed below its lower approach level -- prep long")

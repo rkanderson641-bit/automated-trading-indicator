@@ -47,7 +47,7 @@ calculate_sma(prices, window=3)
 
 Pine Script is a different language from Python, so these are separate,
 hand-written implementations — they can't be pasted into the Pine Editor
-directly from `main.py`. There are five independent indicators so each
+directly from `main.py`. There are six independent indicators so each
 piece can be added or removed on its own to declutter the chart without
 touching the others:
 
@@ -222,6 +222,24 @@ version of this script:
   tagged `FAKEOUT` and the watch is cancelled.
 
 RSI isn't used anywhere in this script.
+
+### [pine/rsi_extension_signals.pine](pine/rsi_extension_signals.pine)
+
+A standalone indicator that flags RSI extension directly on the price
+chart, built from annotated chart examples rather than a tutorial:
+- **Raw RSI**: a cross above the overbought level (default 70) plots an
+  `Overextended` label (red, short prep); a cross below the oversold level
+  (default 30) plots an `Underextended` label (green, long prep).
+- **RSI-based MA** (SMA/EMA of RSI, matching TradingView's built-in
+  "RSI-based MA" plot): since this smoothed line rarely reaches 70/30, it
+  gets its own, closer "approach" thresholds (default 65/35) instead of
+  reusing the raw RSI band. Crossing them plots `MA Overextension` (yellow,
+  short prep) or `MA Underextension` (cyan, long prep).
+- Both signals fire once, the instant their line crosses its threshold --
+  they don't repeat every bar while the line stays beyond it.
+- A toggleable debug table shows the live RSI and RSI MA values, so the
+  approach thresholds above can be tuned against real numbers instead of
+  estimated from chart pixels.
 
 ### Using any script
 
