@@ -1,0 +1,62 @@
+//@version=6
+indicator("EMA Trend Ribbon", overlay=true)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+fastLen   = input.int(4, "Fast EMA Length", minval=1, group="EMA Ribbon")
+slowLen   = input.int(9, "Slow EMA Length", minval=1, group="EMA Ribbon")
+gapThresh = input.float(0.03, "EMA Gap Threshold", minval=0, step=0.01, group="EMA Ribbon")
+gapMode   = input.string("Percent", "Gap Threshold Mode", options=["Percent", "Raw Price"], group="EMA Ribbon")
+
+bullColor          = input.color(color.green, "Bullish Color", group="Style")
+bearColor          = input.color(color.red, "Bearish Color", group="Style")
+neutralColor       = input.color(color.yellow, "Neutral/Chop Color", group="Style")
+showFastEma        = input.bool(true, "Show Fast EMA line", group="Style")
+showSlowEma        = input.bool(false, "Show Slow EMA line", group="Style")
+ribbonTransparency = input.int(70, "Ribbon Fill Transparency", minval=0, maxval=100, group="Style")
+
+showDebug = input.bool(true, "Show live gap debug readout", group="Debug")
+
+// ---------------------------------------------------------------------------
+// Modeled on "Peachy Trend Pro" (a closed-source TradingView indicator): a
+// fast/slow EMA pair where the fast EMA line and the fill between the two
+// EMAs are both colored by the same 3-state trend read -- bullish (fast
+// meaningfully above slow), bearish (fast meaningfully below slow), or
+// neutral/chop (the gap is too small to call a real trend). "Meaningfully"
+// is `gapThresh`, the only tunable input the real indicator exposes.
+//
+// The real indicator's gap threshold (0.03) is too small to be a raw price
+// gap on an instrument trading in the tens of thousands, so this defaults to
+// reading it as a PERCENT-of-price gap instead -- but `gapMode` exposes both
+// interpretations as a live toggle, since the real indicator is closed
+// source: with it sitting on the same chart, flip this and watch which mode
+// flips color on the same bar as the real one, rather than guessing blind.
+// ---------------------------------------------------------------------------
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+
+gapRaw = emaFast - emaSlow
+gapPct = emaSlow != 0 ? (gapRaw / emaSlow) * 100 : 0.0
+gapVal = gapMode == "Percent" ? gapPct : gapRaw
+
+state      = gapVal > gapThresh ? 1 : gapVal < -gapThresh ? -1 : 0
+stateColor = state == 1 ? bullColor : state == -1 ? bearColor : neutralColor
+
+fastLineColor = showFastEma ? stateColor : na
+slowLineColor = showSlowEma ? stateColor : na
+
+fastPlot = plot(emaFast, "Fast EMA", color=fastLineColor, linewidth=2)
+slowPlot = plot(emaSlow, "Slow EMA", color=slowLineColor, linewidth=1)
+fill(fastPlot, slowPlot, color=color.new(stateColor, ribbonTransparency), title="EMA Ribbon")
+
+// Live numeric readout so the gap-mode question above can be settled by
+// direct comparison against the real indicator instead of guessed.
+if showDebug and barstate.islast
+    var table dbgTable = table.new(position.bottom_right, 2, 3, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    table.cell(dbgTable, 0, 0, "Gap %", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 0, str.tostring(gapPct, "#.####"), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "Gap Raw", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 1, str.tostring(gapRaw, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 2, "State", text_color=color.white, bgcolor=color.new(color.purple, 60))
+    table.cell(dbgTable, 1, 2, state == 1 ? "Bull" : state == -1 ? "Bear" : "Neutral", text_color=color.white, bgcolor=color.new(color.black, 15))

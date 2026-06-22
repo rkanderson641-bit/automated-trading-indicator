@@ -47,7 +47,7 @@ calculate_sma(prices, window=3)
 
 Pine Script is a different language from Python, so these are separate,
 hand-written implementations — they can't be pasted into the Pine Editor
-directly from `main.py`. There are six independent indicators so each
+directly from `main.py`. There are seven independent indicators so each
 piece can be added or removed on its own to declutter the chart without
 touching the others:
 
@@ -252,6 +252,28 @@ tutorial:
 - A toggleable debug table shows the live RSI value, RSI MA value, and each
   side's re-arm state, so the thresholds above can be tuned against real
   numbers instead of estimated from chart pixels.
+
+### [pine/ema_trend_ribbon.pine](pine/ema_trend_ribbon.pine)
+
+A standalone fast/slow EMA ribbon (default 4/9), modeled on the closed-source
+"Peachy Trend Pro" indicator by eye rather than from a tutorial or source
+access:
+- The fast EMA line and the fill between the two EMAs are both colored by
+  the same 3-state read on the gap between them: bullish (green, fast
+  meaningfully above slow), bearish (red, fast meaningfully below slow), or
+  neutral/chop (yellow, the gap is too small to call a real trend).
+  "Meaningfully" is `EMA Gap Threshold`, the only tunable input the real
+  indicator exposes.
+- Since the real indicator's default threshold (0.03) is too small to be a
+  raw price gap on an instrument trading in the tens of thousands,
+  `Gap Threshold Mode` lets the gap be read as either a percent-of-price gap
+  (the default guess) or a raw price gap — a live toggle rather than a
+  guess, meant to be flipped while comparing side-by-side against the real
+  indicator on the same chart.
+- The slow EMA line is hidden by default (matching how it renders in the
+  real indicator) — only the fast EMA line and the ribbon fill show.
+- A toggleable debug table shows the live raw and percent gap plus the
+  current state, for that same side-by-side comparison.
 
 ### Using any script
 
