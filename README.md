@@ -160,14 +160,29 @@ version of this script:
   Lookback/Lookahead Bars` (narrower, default 3) finds the touch points
   that roll a line's far point forward, since a single wide lookback is
   too strict to catch every real touch during a fast or choppy move.
+- **Wick-only, checked continuously, not just at branch points**: every
+  touch point that continues the structure is only accepted if the
+  resulting line stays clear of every candle body the ENTIRE way from
+  origin to that point — not just its newest segment. If extending the
+  existing line that far would cut into some earlier candle's body, a
+  fresh, shorter line anchored from just the last touch point onward is
+  used instead, provided that shorter line is itself clean; if neither
+  is clean, the touch point is ignored. On top of that, every single bar
+  — even quiet ones with no new touch point — the line's projection to
+  "today" is checked against today's candle too, since a fixed slope can
+  drift into a body over many bars just as easily as a bad update can; if
+  it would, the line stops right there (a `CLIP` debug marker) rather
+  than being drawn through it, and the leg restarts fresh from whatever
+  touch point comes next.
 - **Branching**: when a new touch point continues the structure but lands
   meaningfully beyond where the existing line already projects (steeper
   than expected — `Divergence sensitivity margin`), the existing line
   freezes in place and a new, steeper line begins from that same point, in
-  a separate lighter color. A branch is only accepted if it wouldn't cut
-  through any candle's body in between (touching a wick is fine, cutting a
-  body is not) and if its two points are far enough apart (at least the
-  swing lookback) to not just be reacting to one noisy candle.
+  a separate lighter color. The same wick-only check applies, plus its two
+  points must be far enough apart (at least the swing lookback) to not
+  just be reacting to one noisy candle. A line can also branch this way
+  purely because continuing the original line stopped being clean — not
+  just because of steepness.
 - **Reactions vs. real breaks**: a wick can cross a line while the candle's
   close stays on the correct side — that's a reaction (`REACT` marker, the
   line held), not a break. A real break only happens when CLOSE moves

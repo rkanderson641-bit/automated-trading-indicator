@@ -198,6 +198,17 @@ if bearishBreakNow
 // point first becomes a real second point (different from the origin), a
 // trend line exists by definition and starts being drawn -- no RSI or any
 // other gate involved.
+//
+// A touch point that DOES continue only ever gets accepted if the
+// resulting line stays wick-only the ENTIRE way from origin to this new
+// point -- not just the newest segment. If extending the existing line
+// that far would cut into some earlier candle's body, but anchoring a
+// fresh, shorter line from just the last touch point to this new one
+// would stay clean, that shorter line is used instead (the same
+// lighter "divergent" styling as a steepening branch, just triggered by
+// cleanliness instead of slope). If neither the full line nor the short
+// one would stay clean, the touch point is ignored rather than drawn
+// through a body.
 if hadBullishBreak and not na(touchPivotLowVal)
     if na(bullOriginBar)
         bullOriginBar   := touchPivotBarIdx
@@ -208,12 +219,13 @@ if hadBullishBreak and not na(touchPivotLowVal)
         if showDebug
             label.new(bullOriginBar, bullOriginPrice, text="L", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if touchPivotLowVal > bullFarPrice
-        bullEstSlope    = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
-        bullProjected   = bullFarPrice + bullEstSlope * (touchPivotBarIdx - bullFarBar)
-        bullDiverges    = bullFarBar != bullOriginBar and touchPivotLowVal > bullProjected + atrVal * divergeAtrMult
-        bullBranchClean = not lineEntersBody(bullFarBar, bullFarPrice, touchPivotBarIdx, touchPivotLowVal)
-        bullEnoughRun   = touchPivotBarIdx - bullFarBar >= swingBars
-        if bullDiverges and bullBranchClean and bullEnoughRun
+        bullEstSlope      = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
+        bullProjected     = bullFarPrice + bullEstSlope * (touchPivotBarIdx - bullFarBar)
+        bullDivergesSteep = bullFarBar != bullOriginBar and touchPivotLowVal > bullProjected + atrVal * divergeAtrMult
+        bullEnoughRun     = touchPivotBarIdx - bullFarBar >= swingBars
+        bullShortClean    = not lineEntersBody(bullFarBar, bullFarPrice, touchPivotBarIdx, touchPivotLowVal)
+        bullFullClean     = not lineEntersBody(bullOriginBar, bullOriginPrice, touchPivotBarIdx, touchPivotLowVal)
+        if bullEnoughRun and bullShortClean and (bullDivergesSteep or not bullFullClean)
             bullLine        := na
             bullIsDivergent := true
             bullOriginBar   := bullFarBar
@@ -223,12 +235,15 @@ if hadBullishBreak and not na(touchPivotLowVal)
             trackingBull    := true
             if showDebug
                 label.new(bullFarBar, bullFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
-        else
+        else if bullFullClean
             bullFarBar   := touchPivotBarIdx
             bullFarPrice := touchPivotLowVal
             trackingBull := true
             if showDebug
                 label.new(bullFarBar, bullFarPrice, text="+", style=label.style_circle, color=color.new(bullColor, 30), size=size.tiny)
+        else
+            if showDebug
+                label.new(touchPivotBarIdx, touchPivotLowVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
     else
         if showDebug
             label.new(touchPivotBarIdx, touchPivotLowVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
@@ -243,12 +258,13 @@ if hadBearishBreak and not na(touchPivotHighVal)
         if showDebug
             label.new(bearOriginBar, bearOriginPrice, text="H", style=label.style_circle, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
     else if touchPivotHighVal < bearFarPrice
-        bearEstSlope    = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
-        bearProjected   = bearFarPrice + bearEstSlope * (touchPivotBarIdx - bearFarBar)
-        bearDiverges    = bearFarBar != bearOriginBar and touchPivotHighVal < bearProjected - atrVal * divergeAtrMult
-        bearBranchClean = not lineEntersBody(bearFarBar, bearFarPrice, touchPivotBarIdx, touchPivotHighVal)
-        bearEnoughRun   = touchPivotBarIdx - bearFarBar >= swingBars
-        if bearDiverges and bearBranchClean and bearEnoughRun
+        bearEstSlope      = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
+        bearProjected     = bearFarPrice + bearEstSlope * (touchPivotBarIdx - bearFarBar)
+        bearDivergesSteep = bearFarBar != bearOriginBar and touchPivotHighVal < bearProjected - atrVal * divergeAtrMult
+        bearEnoughRun     = touchPivotBarIdx - bearFarBar >= swingBars
+        bearShortClean    = not lineEntersBody(bearFarBar, bearFarPrice, touchPivotBarIdx, touchPivotHighVal)
+        bearFullClean     = not lineEntersBody(bearOriginBar, bearOriginPrice, touchPivotBarIdx, touchPivotHighVal)
+        if bearEnoughRun and bearShortClean and (bearDivergesSteep or not bearFullClean)
             bearLine        := na
             bearIsDivergent := true
             bearOriginBar   := bearFarBar
@@ -258,12 +274,15 @@ if hadBearishBreak and not na(touchPivotHighVal)
             trackingBear    := true
             if showDebug
                 label.new(bearFarBar, bearFarPrice, text="D", style=label.style_circle, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
-        else
+        else if bearFullClean
             bearFarBar   := touchPivotBarIdx
             bearFarPrice := touchPivotHighVal
             trackingBear := true
             if showDebug
                 label.new(bearFarBar, bearFarPrice, text="+", style=label.style_circle, color=color.new(bearColor, 30), size=size.tiny)
+        else
+            if showDebug
+                label.new(touchPivotBarIdx, touchPivotHighVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
     else
         if showDebug
             label.new(touchPivotBarIdx, touchPivotHighVal, text="x", style=label.style_circle, color=color.new(color.gray, 60), size=size.tiny)
@@ -271,16 +290,28 @@ if hadBearishBreak and not na(touchPivotHighVal)
 // Once a line is being tracked, extend it to the current bar along its
 // established slope every single bar -- exactly like auto_support_
 // resistance.pine's level lines -- instead of sitting frozen at its last
-// confirmed touch point. A wick crossing the line while close holds on the
-// correct side is a REACTION (line still respected), not a break. A real
-// break is CLOSE moving through the line by more than the break margin --
-// that freezes the line (with a small overshoot for visibility, never
-// deleted) and opens a pending backtest-confirmation watch instead of
-// firing a signal immediately.
+// confirmed touch point. But that projection has to be checked against
+// TODAY's body too, every single bar, not just at the moment a touch point
+// updates -- price drifting away from an old anchor over many quiet bars
+// (no new touch point at all) can walk the projected line into a body just
+// as easily as a bad touch-point update can. If today's projection would
+// land inside today's body, the line stops right there instead of being
+// drawn through it -- this isn't a price reversal, just the line running
+// out of valid road, so no break label or backtest watch fires; the leg
+// simply restarts fresh from whatever touch point comes next. A wick
+// crossing the line while close holds on the correct side (the line
+// sitting outside the body entirely) is a REACTION, not an intrusion. A
+// real break is CLOSE moving through the line by more than the break
+// margin -- that freezes the line (with a small overshoot for visibility,
+// never deleted) and opens a pending backtest-confirmation watch instead
+// of firing a signal immediately.
 if trackingBull and not na(bullOriginBar)
     bullSlope        = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
     bullProjectedNow = bullFarPrice + bullSlope * (bar_index - bullFarBar)
     bullBreakMargin  = atrVal * minBreakAtrMult + math.abs(bullSlope) * touchBars
+    bullBodyTop      = math.max(open, close)
+    bullBodyBottom   = math.min(open, close)
+    bullIntrudesNow  = bullProjectedNow > bullBodyBottom and bullProjectedNow < bullBodyTop
     if close < bullProjectedNow - bullBreakMargin
         if not na(bullLine) and freezeExtendBars > 0
             line.set_xy2(bullLine, bar_index + freezeExtendBars, bullProjectedNow + bullSlope * freezeExtendBars)
@@ -297,6 +328,15 @@ if trackingBull and not na(bullOriginBar)
         pendingShortTested := false
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+    else if bullIntrudesNow
+        trackingBull    := false
+        bullLine        := na
+        bullOriginBar   := na
+        bullOriginPrice := na
+        bullFarBar      := na
+        bullFarPrice    := na
+        if showDebug
+            label.new(bar_index, bullBodyBottom, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
     else
         if showReactions and low < bullProjectedNow and close >= bullProjectedNow
             label.new(bar_index, low, text="REACT", style=label.style_circle, color=color.new(bullColor, 40), textcolor=color.white, size=size.tiny)
@@ -310,6 +350,9 @@ if trackingBear and not na(bearOriginBar)
     bearSlope        = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
     bearProjectedNow = bearFarPrice + bearSlope * (bar_index - bearFarBar)
     bearBreakMargin  = atrVal * minBreakAtrMult + math.abs(bearSlope) * touchBars
+    bearBodyTop      = math.max(open, close)
+    bearBodyBottom   = math.min(open, close)
+    bearIntrudesNow  = bearProjectedNow > bearBodyBottom and bearProjectedNow < bearBodyTop
     if close > bearProjectedNow + bearBreakMargin
         if not na(bearLine) and freezeExtendBars > 0
             line.set_xy2(bearLine, bar_index + freezeExtendBars, bearProjectedNow + bearSlope * freezeExtendBars)
@@ -326,6 +369,15 @@ if trackingBear and not na(bearOriginBar)
         pendingLongTested := false
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+    else if bearIntrudesNow
+        trackingBear    := false
+        bearLine        := na
+        bearOriginBar   := na
+        bearOriginPrice := na
+        bearFarBar      := na
+        bearFarPrice    := na
+        if showDebug
+            label.new(bar_index, bearBodyTop, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
     else
         if showReactions and high > bearProjectedNow and close <= bearProjectedNow
             label.new(bar_index, high, text="REACT", style=label.style_circle, color=color.new(bearColor, 40), textcolor=color.white, size=size.tiny)
