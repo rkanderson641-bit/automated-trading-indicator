@@ -184,10 +184,13 @@ version of this script:
   than expected — `Divergence sensitivity margin`), the existing line
   freezes in place and a new, steeper line begins from that same point, in
   a separate lighter color. The same wick-only check applies, plus its two
-  points must be far enough apart (at least the swing lookback) to not
-  just be reacting to one noisy candle. A line can also branch this way
-  purely because continuing the original line stopped being clean — not
-  just because of steepness.
+  points must be at least the touch-point lookback apart — enough to rule
+  out two points bracketing one single freak candle, without blocking a
+  real steep, fast, multi-bar move just because its touch points land
+  closer together than a slower trend's would; a sustained steep move is
+  exactly when this should fire most often, not be blocked. A line can
+  also branch this way purely because continuing the original line
+  stopped being clean — not just because of steepness.
 - **Reactions vs. real breaks**: a wick can cross a line while the candle's
   close stays on the correct side — that's a reaction (`REACT` marker, the
   line held), not a break. A real break only happens when CLOSE moves

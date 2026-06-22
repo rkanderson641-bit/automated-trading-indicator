@@ -40,8 +40,12 @@ showDebug        = input.bool(true, "Show debug markers (touch points)", group="
 // than expected), the existing line freezes in place and a new, steeper
 // line begins from that same point, drawn in a lighter color. A branch is
 // only accepted if it wouldn't cut through any candle's body in between
-// (wick-only, never a body) and if its two points are far enough apart to
-// not just be reacting to a single noisy candle.
+// (wick-only, never a body) and if its two points are at least touchBars
+// apart -- enough to rule out two points bracketing one single freak
+// candle, without blocking a real steep, fast, multi-bar move just
+// because its touch points land closer together than a slower trend's
+// would. A sustained steep move is exactly when this should fire most
+// often, not be blocked.
 //
 // A line only ever touches WICKS, never closes through a candle body --
 // this is checked, not assumed.
@@ -222,7 +226,7 @@ if hadBullishBreak and not na(touchPivotLowVal)
         bullEstSlope      = bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
         bullProjected     = bullFarPrice + bullEstSlope * (touchPivotBarIdx - bullFarBar)
         bullDivergesSteep = bullFarBar != bullOriginBar and touchPivotLowVal > bullProjected + atrVal * divergeAtrMult
-        bullEnoughRun     = touchPivotBarIdx - bullFarBar >= swingBars
+        bullEnoughRun     = touchPivotBarIdx - bullFarBar >= touchBars
         bullShortClean    = not lineEntersBody(bullFarBar, bullFarPrice, touchPivotBarIdx, touchPivotLowVal)
         bullFullClean     = not lineEntersBody(bullOriginBar, bullOriginPrice, touchPivotBarIdx, touchPivotLowVal)
         if bullEnoughRun and bullShortClean and (bullDivergesSteep or not bullFullClean)
@@ -261,7 +265,7 @@ if hadBearishBreak and not na(touchPivotHighVal)
         bearEstSlope      = bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
         bearProjected     = bearFarPrice + bearEstSlope * (touchPivotBarIdx - bearFarBar)
         bearDivergesSteep = bearFarBar != bearOriginBar and touchPivotHighVal < bearProjected - atrVal * divergeAtrMult
-        bearEnoughRun     = touchPivotBarIdx - bearFarBar >= swingBars
+        bearEnoughRun     = touchPivotBarIdx - bearFarBar >= touchBars
         bearShortClean    = not lineEntersBody(bearFarBar, bearFarPrice, touchPivotBarIdx, touchPivotHighVal)
         bearFullClean     = not lineEntersBody(bearOriginBar, bearOriginPrice, touchPivotBarIdx, touchPivotHighVal)
         if bearEnoughRun and bearShortClean and (bearDivergesSteep or not bearFullClean)
