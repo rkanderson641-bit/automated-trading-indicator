@@ -142,6 +142,48 @@ multi-timeframe confluence levels traders mark up by hand:
 
 Each group has its own visibility toggle and color inputs.
 
+### [pine/trend_line_strategy.pine](pine/trend_line_strategy.pine)
+
+A standalone trend-line indicator rebuilt directly from a trend-line
+tutorial (gold futures on ThinkOrSwim) rather than from a hand-typed spec —
+audio transcript and on-screen chart frames were both reviewed to confirm
+the rules below before writing any code. There is **no RSI gate of any
+kind** — that was a mistaken assumption baked into an earlier, since-deleted
+version of this script:
+- An uptrend line connects 2+ ascending swing lows; a downtrend line
+  connects 2+ descending swing highs — same pivot type only, never a high
+  to a low. A line is drawn the instant it has two real touch points and
+  stays visible the whole time it's structurally valid, exactly like a
+  hand-drawn trend line.
+- Two pivot lookbacks: `Swing Lookback/Lookahead Bars` (wider, default 8)
+  picks the origin pivot and overall trend direction; `Touch Point
+  Lookback/Lookahead Bars` (narrower, default 3) finds the touch points
+  that roll a line's far point forward, since a single wide lookback is
+  too strict to catch every real touch during a fast or choppy move.
+- **Branching**: when a new touch point continues the structure but lands
+  meaningfully beyond where the existing line already projects (steeper
+  than expected — `Divergence sensitivity margin`), the existing line
+  freezes in place and a new, steeper line begins from that same point, in
+  a separate lighter color. A branch is only accepted if it wouldn't cut
+  through any candle's body in between (touching a wick is fine, cutting a
+  body is not) and if its two points are far enough apart (at least the
+  swing lookback) to not just be reacting to one noisy candle.
+- **Reactions vs. real breaks**: a wick can cross a line while the candle's
+  close stays on the correct side — that's a reaction (`REACT` marker, the
+  line held), not a break. A real break only happens when CLOSE moves
+  through the line by more than the break margin (`Minimum break size`).
+  On a break the line freezes (with a small visual overshoot, never
+  deleted) — but unlike a flagged signal, nothing fires yet.
+- **Confirmation via backtest**: a break alone can fake out, so instead of
+  signaling immediately, the broken level is watched for up to `Backtest
+  window after a break` bars. If price comes back to test that level
+  (within `Backtest proximity` x ATR) and then closes back away in the new
+  direction, that's a `CONFIRMED LONG`/`CONFIRMED SHORT` entry signal. If
+  price instead closes back through to the original side first, it's
+  tagged `FAKEOUT` and the watch is cancelled.
+
+RSI isn't used anywhere in this script.
+
 ### Using any script
 
 1. Open any chart on [TradingView](https://www.tradingview.com)
