@@ -174,6 +174,17 @@ var bool trackingBear = false
 var bool bullIsDivergent = false
 var bool bearIsDivergent = false
 
+// Last-computed break reference/margin for each direction, persisted so
+// the debug table below can show them even on bars where that direction
+// isn't currently active -- this is exactly the input to the break check,
+// so seeing it directly (rather than just "inactive") is what actually
+// shows whether a long-blank stretch is a stale-but-technically-unbroken
+// reference or something else.
+var float bullRefDbg    = na
+var float bullMarginDbg = na
+var float bearRefDbg    = na
+var float bearMarginDbg = na
+
 var int   bullOriginBar   = na
 var int   bullOriginTime  = na
 var float bullOriginPrice = na
@@ -377,6 +388,8 @@ if trendState == 1 and not na(bullOriginBar)
     bullSlope        = trackingBull and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : 0.0
     bullProjectedNow = trackingBull ? bullFarPrice + bullSlope * (bar_index - bullFarBar) : bullOriginPrice
     bullBreakMargin  = atrVal * minBreakAtrMult + math.abs(bullSlope) * touchBars
+    bullRefDbg       := bullProjectedNow
+    bullMarginDbg    := bullBreakMargin
     bullBodyTop      = math.max(open, close)
     bullBodyBottom   = math.min(open, close)
     bullIntrudesNow  = trackingBull and bullProjectedNow > bullBodyBottom and bullProjectedNow < bullBodyTop
@@ -449,6 +462,8 @@ if trendState == -1 and not na(bearOriginBar)
     bearSlope        = trackingBear and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : 0.0
     bearProjectedNow = trackingBear ? bearFarPrice + bearSlope * (bar_index - bearFarBar) : bearOriginPrice
     bearBreakMargin  = atrVal * minBreakAtrMult + math.abs(bearSlope) * touchBars
+    bearRefDbg       := bearProjectedNow
+    bearMarginDbg    := bearBreakMargin
     bearBodyTop      = math.max(open, close)
     bearBodyBottom   = math.min(open, close)
     bearIntrudesNow  = trackingBear and bearProjectedNow > bearBodyBottom and bearProjectedNow < bearBodyTop
@@ -542,10 +557,21 @@ if pendingLongActive
 // can be verified precisely instead of estimated from chart pixels.
 if showDebug and barstate.islast
     var table dbgTable = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    // Origin/far/reference shown unconditionally whenever an origin
+    // exists at all -- NOT just while actively tracking a real 2-point
+    // line. "inactive" was hiding exactly the numbers needed to tell a
+    // stale-but-technically-unbroken reference (large age, dist within
+    // margin) apart from something else going wrong (e.g. dist already
+    // past margin with no break firing, which would point to a real bug
+    // rather than expected behavior).
     bullDbgSlope = trackingBull and not na(bullOriginBar) and bullFarBar != bullOriginBar ? (bullFarPrice - bullOriginPrice) / (bullFarBar - bullOriginBar) : na
     bearDbgSlope = trackingBear and not na(bearOriginBar) and bearFarBar != bearOriginBar ? (bearFarPrice - bearOriginPrice) / (bearFarBar - bearOriginBar) : na
-    bullDbgText  = trackingBull and not na(bullOriginBar) ? "o(" + str.tostring(bullOriginBar) + ", " + str.tostring(bullOriginPrice, format.mintick) + ")  f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####") + (bullIsDivergent ? "  [D]" : "") : "inactive"
-    bearDbgText  = trackingBear and not na(bearOriginBar) ? "o(" + str.tostring(bearOriginBar) + ", " + str.tostring(bearOriginPrice, format.mintick) + ")  f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####") + (bearIsDivergent ? "  [D]" : "") : "inactive"
+    bullAge      = na(bullOriginBar) ? na : bar_index - bullOriginBar
+    bearAge      = na(bearOriginBar) ? na : bar_index - bearOriginBar
+    bullDist     = na(bullRefDbg) ? na : close - bullRefDbg
+    bearDist     = na(bearRefDbg) ? na : close - bearRefDbg
+    bullDbgText  = na(bullOriginBar) ? "no origin" : (trackingBull ? "[tracking] f(" + str.tostring(bullFarBar) + ", " + str.tostring(bullFarPrice, format.mintick) + ")  slope=" + str.tostring(bullDbgSlope, "#.####") : "[pending]") + "  age=" + str.tostring(bullAge) + "  dist=" + str.tostring(bullDist, format.mintick) + "/" + str.tostring(bullMarginDbg, format.mintick) + (bullIsDivergent ? "  [D]" : "")
+    bearDbgText  = na(bearOriginBar) ? "no origin" : (trackingBear ? "[tracking] f(" + str.tostring(bearFarBar) + ", " + str.tostring(bearFarPrice, format.mintick) + ")  slope=" + str.tostring(bearDbgSlope, "#.####") : "[pending]") + "  age=" + str.tostring(bearAge) + "  dist=" + str.tostring(bearDist, format.mintick) + "/" + str.tostring(bearMarginDbg, format.mintick) + (bearIsDivergent ? "  [D]" : "")
     stateText    = trendState == 1 ? "BULL" : trendState == -1 ? "BEAR" : "none"
     // Backtest-watch status -- shows directly whether a bearish leg ever
     // becomes a real line (hasLine) before breaking up, and whether the
