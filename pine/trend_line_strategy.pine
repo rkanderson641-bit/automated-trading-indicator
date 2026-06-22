@@ -87,8 +87,20 @@ showDebug        = input.bool(true, "Show debug markers (touch points)", group="
 lineEntersBody(int fromBar, float fromPrice, int toBar, float toPrice) =>
     slope = toBar != fromBar ? (toPrice - fromPrice) / (toBar - fromBar) : 0.0
     entersBody = false
-    if toBar - fromBar > 1
-        for i = fromBar + 1 to toBar - 1
+    // Pine's [] history-referencing operator only accepts an offset up to
+    // 10000 bars back. An origin that's gone very stale (a leg frozen or
+    // still pending its second touch point for thousands of bars while
+    // bar_index keeps climbing) can make this span exceed that and crash.
+    // Clamp the scan to the most recent maxLookback bars of the span
+    // instead of however far back fromBar actually is -- the older portion
+    // was already verified clean incrementally, bar by bar, as the line
+    // was first drawn (see the continuous per-bar check further down), so
+    // re-scanning all the way back to a stale origin isn't needed.
+    maxLookback = 9000
+    earliestBar = math.max(fromBar + 1, bar_index - maxLookback)
+    latestBar   = toBar - 1
+    if latestBar >= earliestBar
+        for i = earliestBar to latestBar
             offset = bar_index - i
             lineVal = fromPrice + slope * (i - fromBar)
             bodyTop = math.max(open[offset], close[offset])
