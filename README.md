@@ -280,15 +280,15 @@ access:
   "Meaningfully" is `EMA Gap Threshold`, the only tunable input the real
   indicator exposes.
 - Since the real indicator's default threshold (0.03) is too small to be a
-  raw price gap on an instrument trading in the tens of thousands,
-  `Gap Threshold Mode` lets the gap be read as either a percent-of-price gap
-  (the default guess) or a raw price gap — a live toggle rather than a
-  guess, meant to be flipped while comparing side-by-side against the real
-  indicator on the same chart.
+  raw price gap on an instrument trading in the tens of thousands, the gap
+  is read as a percent-of-price gap by default, confirmed against the real
+  indicator's look on the same chart. `Gap Threshold Mode` still exposes a
+  raw-price alternative as a toggle, in case a different instrument's price
+  scale ever calls for it.
 - The slow EMA line is hidden by default (matching how it renders in the
   real indicator) — only the fast EMA line and the ribbon fill show.
 - A toggleable debug table shows the live raw and percent gap plus the
-  current state, for that same side-by-side comparison.
+  current state, useful for tuning the gap threshold against real numbers.
 
 ### Using any script
 
