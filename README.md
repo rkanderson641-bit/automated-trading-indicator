@@ -179,18 +179,22 @@ version of this script:
   marker), but the underlying origin/far tracking is left alone, so the
   next genuinely clean touch point resumes drawing immediately with a
   fresh line, instead of requiring a whole new leg from scratch.
-- **Branching**: when a new touch point continues the structure but lands
-  meaningfully beyond where the existing line already projects (steeper
-  than expected — `Divergence sensitivity margin`), the existing line
-  freezes in place and a new, steeper line begins from that same point, in
-  a separate lighter color. The same wick-only check applies, plus its two
-  points must be at least the touch-point lookback apart — enough to rule
-  out two points bracketing one single freak candle, without blocking a
-  real steep, fast, multi-bar move just because its touch points land
-  closer together than a slower trend's would; a sustained steep move is
-  exactly when this should fire most often, not be blocked. A line can
-  also branch this way purely because continuing the original line
-  stopped being clean — not just because of steepness.
+- **Branching**: a new touch point that continues the structure always
+  prefers to just extend the existing line, rolling the far point forward
+  from the same fixed origin — that alone captures a steepening move,
+  since the slope from origin to an ever-newer, ever-further far point
+  increases on its own with no branch needed. A branch only happens when
+  extending the existing line that far is no longer possible — it would
+  cut through some earlier candle's body — in which case the existing
+  line freezes in place and a new line begins from just the last touch
+  point, in a separate lighter color. (An earlier version also branched
+  on steepness alone, but that fired on nearly every touch point during a
+  fast move even when the original line would have stayed perfectly clean
+  by just extending, fragmenting one steep move into a fan of short
+  branches instead of one continuously steepening line.) A branch is only
+  ever accepted if its two points are at least the touch-point lookback
+  apart — enough to rule out two points bracketing one single freak
+  candle.
 - **Regime state, decoupled from pivot ratcheting**: exactly one direction
   (bullish leg, bearish leg, or neither yet) is active at a time, and it
   only changes in two places — the very first decisive break at startup,
