@@ -170,13 +170,15 @@ version of this script:
   is clean, the touch point is ignored. On top of that, every single bar
   — even quiet ones with no new touch point — the line's projection to
   "today" is checked against today's candle too, since a fixed slope can
-  drift into a body over many bars just as easily as a bad update can. If
-  it would, rendering is simply skipped for that one bar (a `CLIP` debug
-  marker) — the line and its anchors are left exactly as they are rather
-  than torn down, since intrusion on a single bar is almost always a
-  one-bar coincidence rather than proof the anchor has gone bad; tearing
-  it down on every such bar left visible gaps in otherwise-clean trends
-  and erased the very line a genuine divergence needed to compare against.
+  drift into a body over many bars just as easily as a bad update can. A
+  Pine line is always one continuous straight segment, so there's no such
+  thing as skipping the one bar that would intrude while still drawing the
+  bars after it (the next update just redraws a fresh straight line
+  through that same bar anyway) — so if it would intrude, drawing actually
+  stops there: the line freezes (left on the chart, a `CLIP` debug
+  marker), but the underlying origin/far tracking is left alone, so the
+  next genuinely clean touch point resumes drawing immediately with a
+  fresh line, instead of requiring a whole new leg from scratch.
 - **Branching**: when a new touch point continues the structure but lands
   meaningfully beyond where the existing line already projects (steeper
   than expected — `Divergence sensitivity margin`), the existing line

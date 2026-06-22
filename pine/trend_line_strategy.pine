@@ -294,17 +294,20 @@ if hadBearishBreak and not na(touchPivotHighVal)
 // TODAY's body too, every single bar, not just at the moment a touch point
 // updates -- price drifting away from an old anchor over many quiet bars
 // (no new touch point at all) can walk the projected line into a body just
-// as easily as a bad touch-point update can. If today's projection would
-// land inside today's body, rendering is simply skipped for that one bar
-// -- the line, origin, and far point are all left exactly as they are,
-// rather than tearing the leg down. Intrusion on a single bar is almost
-// always a one-bar geometric coincidence, not proof the anchor itself has
-// gone bad, and resetting on every such bar left visible gaps in
-// otherwise-clean trends and erased the very line a genuine divergence
-// needed to compare itself against. A wick crossing the line while close
-// holds on the correct side (the line sitting outside the body entirely)
-// is a REACTION, not an intrusion. A real break is CLOSE moving through
-// the line by more than the break margin -- that freezes the line (with a
+// as easily as a bad touch-point update can. A Pine line is always one
+// continuous straight segment, though, so there's no such thing as
+// "skipping" the one bar that would intrude while still drawing the bars
+// after it -- the next update would just redraw a fresh straight line
+// through that same bar anyway. So if today's projection would land
+// inside today's body, drawing genuinely stops there (the line freezes,
+// left on the chart, never deleted) -- but the underlying origin/far
+// tracking is left alone, so the roll-forward block above can still
+// recognize the next genuinely clean touch point using this same origin
+// and resume drawing immediately, rather than needing a whole new leg to
+// start from scratch. A wick crossing the line while close holds on the
+// correct side (the line sitting outside the body entirely) is a
+// REACTION, not an intrusion. A real break is CLOSE moving through the
+// line by more than the break margin -- that freezes the line (with a
 // small overshoot for visibility, never deleted) and opens a pending
 // backtest-confirmation watch instead of firing a signal immediately.
 if trackingBull and not na(bullOriginBar)
@@ -331,14 +334,20 @@ if trackingBull and not na(bullOriginBar)
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
     else if bullIntrudesNow
-        // Skip rendering for just this one bar -- leave the line, origin,
-        // and far point exactly as they are rather than tearing the whole
-        // leg down. Intrusion is almost always a one-bar geometric
-        // artifact (this bar's body happens to sit where the line
-        // projects to), not proof the anchor itself is bad -- the very
-        // next bar's body is usually clear again. Resetting on every such
-        // bar was both leaving visible gaps in otherwise-clean trends and
-        // erasing the line a genuine divergence needed to compare against.
+        // A line is one continuous straight segment between two points --
+        // there's no such thing as "skip drawing through just this one
+        // bar" while still drawing the bars after it; the next update
+        // would just redraw a fresh straight line from the same origin
+        // through this same bar anyway. So this has to actually stop the
+        // line, not pretend to skip past the problem. Unlike a real break,
+        // though, the underlying origin/far tracking is left alone (only
+        // drawing pauses) so the roll-forward block above can still
+        // recognize the next genuinely clean touch point -- whether a
+        // plain continuation or a divergent branch -- using this same
+        // origin, and resume drawing immediately with a fresh line rather
+        // than needing an entirely new leg to start from scratch.
+        trackingBull := false
+        bullLine     := na
         if showDebug
             label.new(bar_index, bullBodyBottom, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
     else
@@ -374,8 +383,13 @@ if trackingBear and not na(bearOriginBar)
         if showLabels
             label.new(bar_index, close, text="TREND BREAK", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
     else if bearIntrudesNow
-        // See the symmetric comment in the bullish block above -- skip
-        // just this one bar, keep the line and its anchors alive.
+        // See the symmetric comment in the bullish block above -- this
+        // stops the line for good (drawing pauses), but leaves
+        // bearOriginBar/bearFarBar alone so the roll-forward block can
+        // still resume drawing the moment a genuinely clean touch point
+        // arrives, instead of needing a whole new leg from scratch.
+        trackingBear := false
+        bearLine     := na
         if showDebug
             label.new(bar_index, bearBodyTop, text="CLIP", style=label.style_circle, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
     else
