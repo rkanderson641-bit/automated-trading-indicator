@@ -1,0 +1,69 @@
+//@version=6
+indicator("Trade Entry Assistant", overlay=true, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+showDebug = input.bool(true, "Show HTF bias debug table", group="Debug")
+
+// ---------------------------------------------------------------------------
+// Step 1: HTF bias from KPL confluence (Daily -> 4H -> 1H).
+//
+// A KPL "reacts" when a candle's wick crosses it but the CLOSE holds on
+// one side -- a bullish reaction is low <= KPL with close > KPL (tested
+// from above and held), a bearish reaction is high >= KPL with close <
+// KPL (tested from below and rejected). This matches "bias comes from how
+// price reacts at these levels, not the levels alone" from the source
+// video, and the same wick-vs-close discipline already used elsewhere in
+// this repo.
+//
+// Crucially, that reaction has to be evaluated using THAT TIMEFRAME's own
+// candle -- a Daily reaction means a full Daily candle wicked into the
+// Daily SMA and closed back off it, not a chart-timeframe candle poking
+// into a Daily level. So the wick-vs-close check itself runs inside each
+// request.security() call (where high/low/close resolve to that
+// timeframe's own OHLC), not locally against a requested SMA value.
+//
+// This first pass only covers SMA-50/200 KPLs (key_price_levels.pine
+// already computes exactly these per timeframe) -- fib-based KPLs
+// (50%/61.8% of each timeframe's most recent swing) are the planned next
+// addition once this is verified, not yet included.
+// ---------------------------------------------------------------------------
+htfBias(simple string tf) =>
+    [sma50, sma200, bull50, bear50, bull200, bear200] = request.security(syminfo.tickerid, tf, [
+        ta.sma(close, 50),
+        ta.sma(close, 200),
+        low <= ta.sma(close, 50) and close > ta.sma(close, 50),
+        high >= ta.sma(close, 50) and close < ta.sma(close, 50),
+        low <= ta.sma(close, 200) and close > ta.sma(close, 200),
+        high >= ta.sma(close, 200) and close < ta.sma(close, 200)],
+        lookahead=barmerge.lookahead_off)
+
+    bullHits = (bull50 ? 1 : 0) + (bull200 ? 1 : 0)
+    bearHits = (bear50 ? 1 : 0) + (bear200 ? 1 : 0)
+    bias = bullHits > bearHits ? 1 : bearHits > bullHits ? -1 : 0
+    [bias, sma50, sma200, bullHits, bearHits]
+
+[biasD,  smaD50,  smaD200,  bullHitsD,  bearHitsD]  = htfBias("D")
+[bias4H, sma4H50, sma4H200, bullHits4H, bearHits4H] = htfBias("240")
+[bias1H, sma1H50, sma1H200, bullHits1H, bearHits1H] = htfBias("60")
+
+overallBias = biasD + bias4H + bias1H
+
+biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
+
+// ---------------------------------------------------------------------------
+// Live readout of each timeframe's bias and how many KPLs reacted in each
+// direction, so the reaction logic above can be checked against real
+// price action instead of just trusted.
+// ---------------------------------------------------------------------------
+if showDebug and barstate.islast
+    var table dbgTable = table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 0, biasText(biasD) + "  (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 1, biasText(bias4H) + "  (bull " + str.tostring(bullHits4H) + " / bear " + str.tostring(bearHits4H) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 2, "1H", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 2, biasText(bias1H) + "  (bull " + str.tostring(bullHits1H) + " / bear " + str.tostring(bearHits1H) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 3, "Overall", text_color=color.white, bgcolor=color.new(color.purple, 60))
+    table.cell(dbgTable, 1, 3, biasText(overallBias) + "  (" + str.tostring(overallBias) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
