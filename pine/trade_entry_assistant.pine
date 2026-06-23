@@ -4,7 +4,8 @@ indicator("Trade Entry Assistant", overlay=true, max_labels_count=500)
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-showDebug = input.bool(true, "Show HTF bias debug table", group="Debug")
+fibLookback = input.int(100, "Fib Swing Lookback (bars, per timeframe)", minval=2, group="Step 1: HTF Bias")
+showDebug   = input.bool(true, "Show HTF bias debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
 // Step 1: HTF bias from KPL confluence (Daily -> 4H -> 1H).
@@ -24,46 +25,64 @@ showDebug = input.bool(true, "Show HTF bias debug table", group="Debug")
 // request.security() call (where high/low/close resolve to that
 // timeframe's own OHLC), not locally against a requested SMA value.
 //
-// This first pass only covers SMA-50/200 KPLs (key_price_levels.pine
-// already computes exactly these per timeframe) -- fib-based KPLs
-// (50%/61.8% of each timeframe's most recent swing) are the planned next
-// addition once this is verified, not yet included.
+// KPLs are SMA-50/200 (key_price_levels.pine already computes exactly
+// these per timeframe) PLUS the 50%/61.8% retracement of each timeframe's
+// own dominant swing -- "the exact KPLs can be our SMA's or our
+// Fibonacci... two exact KPLs in the same area gives us double confluence"
+// per the source video. The video draws that swing by eye; here it's
+// approximated as the highest-high/lowest-low over `fibLookback` bars of
+// that timeframe, with direction (and so which end the retracement is
+// measured from) decided by whichever extreme printed more recently --
+// ta.highestbars()/ta.lowestbars() return how many bars back each extreme
+// is, so the one closer to 0 happened last.
 // ---------------------------------------------------------------------------
-htfBias(simple string tf) =>
-    [sma50, sma200, bull50, bear50, bull200, bear200] = request.security(syminfo.tickerid, tf, [
-        ta.sma(close, 50),
-        ta.sma(close, 200),
-        low <= ta.sma(close, 50) and close > ta.sma(close, 50),
-        high >= ta.sma(close, 50) and close < ta.sma(close, 50),
-        low <= ta.sma(close, 200) and close > ta.sma(close, 200),
-        high >= ta.sma(close, 200) and close < ta.sma(close, 200)],
-        lookahead=barmerge.lookahead_off)
+kplReactions(int len) =>
+    bull50  = low <= ta.sma(close, 50) and close > ta.sma(close, 50)
+    bear50  = high >= ta.sma(close, 50) and close < ta.sma(close, 50)
+    bull200 = low <= ta.sma(close, 200) and close > ta.sma(close, 200)
+    bear200 = high >= ta.sma(close, 200) and close < ta.sma(close, 200)
 
-    bullHits = (bull50 ? 1 : 0) + (bull200 ? 1 : 0)
-    bearHits = (bear50 ? 1 : 0) + (bear200 ? 1 : 0)
+    swingHigh = ta.highest(high, len)
+    swingLow  = ta.lowest(low, len)
+    swingUp   = ta.highestbars(high, len) > ta.lowestbars(low, len)
+    fib50     = swingUp ? swingHigh - (swingHigh - swingLow) * 0.5   : swingLow + (swingHigh - swingLow) * 0.5
+    fib618    = swingUp ? swingHigh - (swingHigh - swingLow) * 0.618 : swingLow + (swingHigh - swingLow) * 0.618
+    bullFib50  = low <= fib50 and close > fib50
+    bearFib50  = high >= fib50 and close < fib50
+    bullFib618 = low <= fib618 and close > fib618
+    bearFib618 = high >= fib618 and close < fib618
+
+    bullHits = (bull50 ? 1 : 0) + (bull200 ? 1 : 0) + (bullFib50 ? 1 : 0) + (bullFib618 ? 1 : 0)
+    bearHits = (bear50 ? 1 : 0) + (bear200 ? 1 : 0) + (bearFib50 ? 1 : 0) + (bearFib618 ? 1 : 0)
+    [bullHits, bearHits, fib50, fib618]
+
+htfBias(simple string tf, int len) =>
+    [bullHits, bearHits, fib50, fib618] = request.security(syminfo.tickerid, tf, kplReactions(len), lookahead=barmerge.lookahead_off)
     bias = bullHits > bearHits ? 1 : bearHits > bullHits ? -1 : 0
-    [bias, sma50, sma200, bullHits, bearHits]
+    [bias, fib50, fib618, bullHits, bearHits]
 
-[biasD,  smaD50,  smaD200,  bullHitsD,  bearHitsD]  = htfBias("D")
-[bias4H, sma4H50, sma4H200, bullHits4H, bearHits4H] = htfBias("240")
-[bias1H, sma1H50, sma1H200, bullHits1H, bearHits1H] = htfBias("60")
+[biasD,  fibD50,  fibD618,  bullHitsD,  bearHitsD]  = htfBias("D",   fibLookback)
+[bias4H, fib4H50, fib4H618, bullHits4H, bearHits4H] = htfBias("240", fibLookback)
+[bias1H, fib1H50, fib1H618, bullHits1H, bearHits1H] = htfBias("60",  fibLookback)
 
 overallBias = biasD + bias4H + bias1H
 
 biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 
 // ---------------------------------------------------------------------------
-// Live readout of each timeframe's bias and how many KPLs reacted in each
-// direction, so the reaction logic above can be checked against real
-// price action instead of just trusted.
+// Live readout of each timeframe's bias, how many KPLs (now out of up to 4:
+// SMA50, SMA200, Fib50, Fib618) reacted in each direction, and the fib
+// levels themselves -- so both the reaction logic and the auto-detected
+// swing can be checked against real price action and real numbers instead
+// of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
     var table dbgTable = table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
-    table.cell(dbgTable, 1, 0, biasText(biasD) + "  (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
-    table.cell(dbgTable, 1, 1, biasText(bias4H) + "  (bull " + str.tostring(bullHits4H) + " / bear " + str.tostring(bearHits4H) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 1, 1, biasText(bias4H) + " (bull " + str.tostring(bullHits4H) + " / bear " + str.tostring(bearHits4H) + ")\nFib50 " + str.tostring(fib4H50, format.mintick) + "  Fib618 " + str.tostring(fib4H618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 2, "1H", text_color=color.white, bgcolor=color.new(color.blue, 60))
-    table.cell(dbgTable, 1, 2, biasText(bias1H) + "  (bull " + str.tostring(bullHits1H) + " / bear " + str.tostring(bearHits1H) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 1, 2, biasText(bias1H) + " (bull " + str.tostring(bullHits1H) + " / bear " + str.tostring(bearHits1H) + ")\nFib50 " + str.tostring(fib1H50, format.mintick) + "  Fib618 " + str.tostring(fib1H618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 3, "Overall", text_color=color.white, bgcolor=color.new(color.purple, 60))
     table.cell(dbgTable, 1, 3, biasText(overallBias) + "  (" + str.tostring(overallBias) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
