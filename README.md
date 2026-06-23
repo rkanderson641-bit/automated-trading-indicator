@@ -192,18 +192,24 @@ access:
 
 ### [pine/vwap_sma_bands.pine](pine/vwap_sma_bands.pine)
 
-A standalone VWAP + SMA envelope indicator, rebuilding natively (no
-external dependency) what was previously three separate free/built-in
-TradingView indicators (a VWAP and two SMA "band" indicators), so a
-future automated signal script can read these values directly instead
-of depending on `input.source()` links to indicators outside this repo:
-- **VWAP**: session-anchored (resets automatically each new session),
-  plain line, no extra options — matches a default-configuration VWAP.
-- **SMA 50 / SMA 200 bands**: each is its own independently toggleable
-  group — an SMA midline plus an upper/lower envelope offset by a
-  configurable percent, with optional fill between the bands. Same
-  construction as a standard "Moving Average Bands" tool, just split
-  into two separately configurable lengths/colors/widths.
+A standalone VWAP + SMA indicator, rebuilding natively (no external
+dependency) what was previously three separate free/built-in
+TradingView indicators, so a future automated signal script can read
+these values directly instead of depending on `input.source()` links
+to indicators outside this repo. Verified directly against each
+reference indicator's own settings dialog rather than assumed from the
+name alone:
+- **VWAP**: session-anchored (resets at the start of each session, via
+  `session.isfirstbar` rather than a calendar-day check, since futures
+  sessions don't reset at midnight), `(H+L+C)/3` source, with up to 3
+  independently toggleable standard-deviation bands (multiplier #1 on
+  by default at 1.0, matching the reference) and an optional fill
+  between each band's upper/lower line. `ta.vwap()` alone doesn't
+  expose the variance bands need, so VWAP and the bands are computed
+  together from the same running sums each bar.
+- **SMA 50 / SMA 200**: plain single moving-average lines — despite the
+  "band" naming, the actual reference indicators have no envelope or
+  offset at all, just Length, Source, and one plotted line each.
 
 ### Using any script
 
