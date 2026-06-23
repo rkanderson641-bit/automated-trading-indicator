@@ -1,5 +1,5 @@
 //@version=6
-strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed_qty, default_qty_value=1, initial_capital=10000)
+strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000)
 
 // ---------------------------------------------------------------------------
 // Inputs
