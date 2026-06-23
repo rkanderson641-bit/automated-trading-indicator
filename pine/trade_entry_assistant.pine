@@ -8,6 +8,8 @@ fibLookback      = input.int(100, "Fib Swing Lookback (bars, per timeframe)", mi
 morningSession   = input.session("1000-1120", "Morning Trend Window", group="Step 2: Time-of-Day Gate")
 lunchSession     = input.session("1120-1300", "Lunch Lull (avoid)", group="Step 2: Time-of-Day Gate")
 afternoonSession = input.session("1300-1400", "Afternoon Window", group="Step 2: Time-of-Day Gate")
+dojiBodyRatio    = input.float(0.1, "Doji Max Body (x candle range)", minval=0.01, maxval=1.0, step=0.01, group="Step 3: LTF Reaction")
+setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group="Step 3: LTF Reaction")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -40,10 +42,12 @@ showDebug        = input.bool(true, "Show debug table", group="Debug")
 // is, so the one closer to 0 happened last.
 // ---------------------------------------------------------------------------
 kplReactions(int len) =>
-    bull50  = low <= ta.sma(close, 50) and close > ta.sma(close, 50)
-    bear50  = high >= ta.sma(close, 50) and close < ta.sma(close, 50)
-    bull200 = low <= ta.sma(close, 200) and close > ta.sma(close, 200)
-    bear200 = high >= ta.sma(close, 200) and close < ta.sma(close, 200)
+    sma50  = ta.sma(close, 50)
+    sma200 = ta.sma(close, 200)
+    bull50  = low <= sma50 and close > sma50
+    bear50  = high >= sma50 and close < sma50
+    bull200 = low <= sma200 and close > sma200
+    bear200 = high >= sma200 and close < sma200
 
     swingHigh = ta.highest(high, len)
     swingLow  = ta.lowest(low, len)
@@ -57,16 +61,16 @@ kplReactions(int len) =>
 
     bullHits = (bull50 ? 1 : 0) + (bull200 ? 1 : 0) + (bullFib50 ? 1 : 0) + (bullFib618 ? 1 : 0)
     bearHits = (bear50 ? 1 : 0) + (bear200 ? 1 : 0) + (bearFib50 ? 1 : 0) + (bearFib618 ? 1 : 0)
-    [bullHits, bearHits, fib50, fib618]
+    [bullHits, bearHits, sma50, sma200, fib50, fib618]
 
 htfBias(simple string tf, int len) =>
-    [bullHits, bearHits, fib50, fib618] = request.security(syminfo.tickerid, tf, kplReactions(len), lookahead=barmerge.lookahead_off)
+    [bullHits, bearHits, sma50, sma200, fib50, fib618] = request.security(syminfo.tickerid, tf, kplReactions(len), lookahead=barmerge.lookahead_off)
     bias = bullHits > bearHits ? 1 : bearHits > bullHits ? -1 : 0
-    [bias, fib50, fib618, bullHits, bearHits]
+    [bias, sma50, sma200, fib50, fib618, bullHits, bearHits]
 
-[biasD,  fibD50,  fibD618,  bullHitsD,  bearHitsD]  = htfBias("D",   fibLookback)
-[bias4H, fib4H50, fib4H618, bullHits4H, bearHits4H] = htfBias("240", fibLookback)
-[bias1H, fib1H50, fib1H618, bullHits1H, bearHits1H] = htfBias("60",  fibLookback)
+[biasD,  smaD50,  smaD200,  fibD50,  fibD618,  bullHitsD,  bearHitsD]  = htfBias("D",   fibLookback)
+[bias4H, sma4H50, sma4H200, fib4H50, fib4H618, bullHits4H, bearHits4H] = htfBias("240", fibLookback)
+[bias1H, sma1H50, sma1H200, fib1H50, fib1H618, bullHits1H, bearHits1H] = htfBias("60",  fibLookback)
 
 overallBias = biasD + bias4H + bias1H
 
@@ -84,8 +88,8 @@ biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 // silently pinned to one guess.
 //
 // This only computes the gate state for now -- nothing reads it yet, since
-// Step 1 has no signal to gate. It starts being enforced once Step 4 adds
-// actual entries.
+// Step 1/3 don't gate themselves on it. It starts being enforced once
+// Step 4 adds actual entries.
 // ---------------------------------------------------------------------------
 inMorningWindow   = not na(time(timeframe.period, morningSession, "America/New_York"))
 inLunchLull       = not na(time(timeframe.period, lunchSession, "America/New_York"))
@@ -95,14 +99,107 @@ inTradingWindow   = inMorningWindow or inAfternoonWindow
 gateText = inMorningWindow ? "Morning window" : inLunchLull ? "Lunch lull (avoid)" : inAfternoonWindow ? "Afternoon window" : "Outside model windows"
 
 // ---------------------------------------------------------------------------
+// Step 3: LTF reaction (whatever timeframe the chart itself is on -- the
+// video uses 5-min, but that's the user's chart setting, not something to
+// hardcode here).
+//
+// "Wait to participate" -- only act on a reaction AT a KPL, never mid-range.
+// Reuses the exact same wick-vs-close reaction discipline as Step 1, just
+// evaluated against the chart's own candle directly (no request.security()
+// needed -- these KPL price levels were already fetched in Step 1; Step 3
+// only checks the CURRENT bar's own high/low/close against them) and OR'd
+// across all 12 KPLs (SMA50/200 + Fib50/618, x3 timeframes).
+//
+// Per the video: a reaction is followed by a doji (indecision), then an
+// action candle (a Heikin-Ashi candle with NO wick on the trailing side) in
+// the confirming direction -- that action candle is the actual go-ahead.
+// "No wick" is taken literally here (haLow == haOpen for a bullish action
+// candle, haHigh == haOpen for bearish), not a near-zero tolerance -- this
+// is an exact equality, not a fragile float comparison, since haLow/haHigh
+// are themselves computed as math.min/max(..., haOpen, ...), so they
+// literally equal haOpen whenever low/high don't extend past it.
+//
+// The video's OTHER LTF trigger -- a micro trend-line break -- is
+// deliberately NOT implemented: trend lines are being marked by hand,
+// separate from this script, not auto-detected here.
+//
+// Modeled as a 3-stage watch (reaction -> doji -> action candle), since the
+// video describes them as a sequence ("a reaction candle, THEN... a doji...
+// followed by an action candle"), not all on one bar. A fresh reaction at
+// any stage restarts the watch with the new direction (a more recent test
+// is more relevant than a stale one); an unconfirmed watch expires after
+// `setupExpiryBars` bars rather than waiting forever.
+// ---------------------------------------------------------------------------
+bullReact(float level) => low <= level and close > level
+bearReact(float level) => high >= level and close < level
+
+ltfBullHits = (bullReact(smaD50) ? 1 : 0) + (bullReact(smaD200) ? 1 : 0) + (bullReact(fibD50) ? 1 : 0) + (bullReact(fibD618) ? 1 : 0) +
+              (bullReact(sma4H50) ? 1 : 0) + (bullReact(sma4H200) ? 1 : 0) + (bullReact(fib4H50) ? 1 : 0) + (bullReact(fib4H618) ? 1 : 0) +
+              (bullReact(sma1H50) ? 1 : 0) + (bullReact(sma1H200) ? 1 : 0) + (bullReact(fib1H50) ? 1 : 0) + (bullReact(fib1H618) ? 1 : 0)
+
+ltfBearHits = (bearReact(smaD50) ? 1 : 0) + (bearReact(smaD200) ? 1 : 0) + (bearReact(fibD50) ? 1 : 0) + (bearReact(fibD618) ? 1 : 0) +
+              (bearReact(sma4H50) ? 1 : 0) + (bearReact(sma4H200) ? 1 : 0) + (bearReact(fib4H50) ? 1 : 0) + (bearReact(fib4H618) ? 1 : 0) +
+              (bearReact(sma1H50) ? 1 : 0) + (bearReact(sma1H200) ? 1 : 0) + (bearReact(fib1H50) ? 1 : 0) + (bearReact(fib1H618) ? 1 : 0)
+
+haClose = (open + high + low + close) / 4
+var float haOpen = na
+haOpen := na(haOpen[1]) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
+haHigh  = math.max(high, math.max(haOpen, haClose))
+haLow   = math.min(low, math.min(haOpen, haClose))
+
+isDoji     = math.abs(close - open) <= dojiBodyRatio * (high - low)
+bullAction = haClose > haOpen and haLow == haOpen
+bearAction = haClose < haOpen and haHigh == haOpen
+
+var int pendingDir      = 0
+var int pendingStage    = 0
+var int pendingStartBar = na
+
+confirmedLongSetup  = false
+confirmedShortSetup = false
+dojiJustConfirmed   = false
+
+if ltfBullHits > 0 or ltfBearHits > 0
+    pendingDir      := ltfBullHits > 0 ? 1 : -1
+    pendingStage    := 1
+    pendingStartBar := bar_index
+else if pendingDir != 0 and bar_index - pendingStartBar > setupExpiryBars
+    pendingDir   := 0
+    pendingStage := 0
+else if pendingDir != 0 and pendingStage == 1 and isDoji
+    pendingStage      := 2
+    dojiJustConfirmed := true
+else if pendingDir != 0 and pendingStage == 2
+    if pendingDir == 1 and bullAction
+        confirmedLongSetup := true
+        pendingDir   := 0
+        pendingStage := 0
+    else if pendingDir == -1 and bearAction
+        confirmedShortSetup := true
+        pendingDir   := 0
+        pendingStage := 0
+
+if ltfBullHits > 0
+    label.new(bar_index, low, text="KPL React+", style=label.style_circle, color=color.new(color.green, 40), size=size.tiny)
+if ltfBearHits > 0
+    label.new(bar_index, high, text="KPL React-", style=label.style_circle, color=color.new(color.red, 40), size=size.tiny)
+if dojiJustConfirmed
+    label.new(bar_index, pendingDir == 1 ? low : high, text="DOJI", style=label.style_circle, color=color.new(color.yellow, 30), size=size.tiny)
+if confirmedLongSetup
+    label.new(bar_index, low, text="LTF LONG SETUP", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+if confirmedShortSetup
+    label.new(bar_index, high, text="LTF SHORT SETUP", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
 // Live readout of each timeframe's bias, how many KPLs (out of up to 4:
 // SMA50, SMA200, Fib50, Fib618) reacted in each direction, the fib levels
-// themselves, and the current time-of-day gate state -- so the reaction
-// logic, the auto-detected swing, and the gate windows can all be checked
-// against real price action and real numbers instead of just trusted.
+// themselves, the current time-of-day gate state, and the Step 3 pending
+// watch -- so the reaction logic, the auto-detected swing, the gate
+// windows, and the LTF sequence can all be checked against real price
+// action and real numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -113,3 +210,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 3, biasText(overallBias) + "  (" + str.tostring(overallBias) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 4, "Gate", text_color=color.white, bgcolor=color.new(color.orange, 60))
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
+    table.cell(dbgTable, 1, 5, pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
