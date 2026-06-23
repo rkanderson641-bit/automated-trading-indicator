@@ -1,11 +1,14 @@
 //@version=6
-indicator("Trade Entry Assistant", overlay=true, max_labels_count=500)
+strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed_qty, default_qty_value=1, initial_capital=10000)
 
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
-fibLookback = input.int(100, "Fib Swing Lookback (bars, per timeframe)", minval=2, group="Step 1: HTF Bias")
-showDebug   = input.bool(true, "Show HTF bias debug table", group="Debug")
+fibLookback      = input.int(100, "Fib Swing Lookback (bars, per timeframe)", minval=2, group="Step 1: HTF Bias")
+morningSession   = input.session("1000-1120", "Morning Trend Window", group="Step 2: Time-of-Day Gate")
+lunchSession     = input.session("1120-1300", "Lunch Lull (avoid)", group="Step 2: Time-of-Day Gate")
+afternoonSession = input.session("1300-1400", "Afternoon Window", group="Step 2: Time-of-Day Gate")
+showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
 // Step 1: HTF bias from KPL confluence (Daily -> 4H -> 1H).
@@ -70,14 +73,36 @@ overallBias = biasD + bias4H + bias1H
 biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 
 // ---------------------------------------------------------------------------
-// Live readout of each timeframe's bias, how many KPLs (now out of up to 4:
-// SMA50, SMA200, Fib50, Fib618) reacted in each direction, and the fib
-// levels themselves -- so both the reaction logic and the auto-detected
-// swing can be checked against real price action and real numbers instead
-// of just trusted.
+// Step 2: time-of-day gate (indices schedule -- this chart is Nasdaq-100
+// futures; the source video gives gold a different schedule, which isn't
+// covered here since nothing on this chart needs it). A HARD filter, not a
+// soft confluence: per the video, true trend tends to form 10:00-11:00 ET
+// (after the 9:45 ORB) and can run to ~11:20 before the model says stop
+// looking; 11:20-13:00 ET is "lunch lull," avoid entirely; 13:00-14:00 ET is
+// the next trend/reversal window. The video gave its boundaries as
+// approximate ("~11:15-11:20"), so they're inputs here rather than numbers
+// silently pinned to one guess.
+//
+// This only computes the gate state for now -- nothing reads it yet, since
+// Step 1 has no signal to gate. It starts being enforced once Step 4 adds
+// actual entries.
+// ---------------------------------------------------------------------------
+inMorningWindow   = not na(time(timeframe.period, morningSession, "America/New_York"))
+inLunchLull       = not na(time(timeframe.period, lunchSession, "America/New_York"))
+inAfternoonWindow = not na(time(timeframe.period, afternoonSession, "America/New_York"))
+inTradingWindow   = inMorningWindow or inAfternoonWindow
+
+gateText = inMorningWindow ? "Morning window" : inLunchLull ? "Lunch lull (avoid)" : inAfternoonWindow ? "Afternoon window" : "Outside model windows"
+
+// ---------------------------------------------------------------------------
+// Live readout of each timeframe's bias, how many KPLs (out of up to 4:
+// SMA50, SMA200, Fib50, Fib618) reacted in each direction, the fib levels
+// themselves, and the current time-of-day gate state -- so the reaction
+// logic, the auto-detected swing, and the gate windows can all be checked
+// against real price action and real numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -86,3 +111,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 2, biasText(bias1H) + " (bull " + str.tostring(bullHits1H) + " / bear " + str.tostring(bearHits1H) + ")\nFib50 " + str.tostring(fib1H50, format.mintick) + "  Fib618 " + str.tostring(fib1H618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 3, "Overall", text_color=color.white, bgcolor=color.new(color.purple, 60))
     table.cell(dbgTable, 1, 3, biasText(overallBias) + "  (" + str.tostring(overallBias) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 4, "Gate", text_color=color.white, bgcolor=color.new(color.orange, 60))
+    table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
