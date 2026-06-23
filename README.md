@@ -47,7 +47,7 @@ calculate_sma(prices, window=3)
 
 Pine Script is a different language from Python, so these are separate,
 hand-written implementations — they can't be pasted into the Pine Editor
-directly from `main.py`. There are seven independent indicators so each
+directly from `main.py`. There are eight independent indicators so each
 piece can be added or removed on its own to declutter the chart without
 touching the others:
 
@@ -189,6 +189,21 @@ access:
   real indicator) — only the fast EMA line and the ribbon fill show.
 - A toggleable debug table shows the live raw and percent gap plus the
   current state, useful for tuning the gap threshold against real numbers.
+
+### [pine/vwap_sma_bands.pine](pine/vwap_sma_bands.pine)
+
+A standalone VWAP + SMA envelope indicator, rebuilding natively (no
+external dependency) what was previously three separate free/built-in
+TradingView indicators (a VWAP and two SMA "band" indicators), so a
+future automated signal script can read these values directly instead
+of depending on `input.source()` links to indicators outside this repo:
+- **VWAP**: session-anchored (resets automatically each new session),
+  plain line, no extra options — matches a default-configuration VWAP.
+- **SMA 50 / SMA 200 bands**: each is its own independently toggleable
+  group — an SMA midline plus an upper/lower envelope offset by a
+  configurable percent, with optional fill between the bands. Same
+  construction as a standard "Moving Average Bands" tool, just split
+  into two separately configurable lengths/colors/widths.
 
 ### Using any script
 

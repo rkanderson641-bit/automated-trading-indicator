@@ -1,0 +1,54 @@
+//@version=6
+indicator("VWAP + SMA Bands", overlay=true)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+showVwap  = input.bool(true, "Show VWAP", group="VWAP")
+vwapColor = input.color(color.yellow, "VWAP Color", group="VWAP")
+vwapWidth = input.int(2, "VWAP Line Width", minval=1, group="VWAP")
+
+show50   = input.bool(true, "Show SMA 50 Band", group="SMA 50 Band")
+len50    = input.int(50, "Length", minval=1, group="SMA 50 Band")
+pct50    = input.float(1.0, "Band Width %", minval=0, step=0.1, group="SMA 50 Band")
+color50  = input.color(color.blue, "Color", group="SMA 50 Band")
+fill50   = input.bool(true, "Fill Band", group="SMA 50 Band")
+
+show200  = input.bool(true, "Show SMA 200 Band", group="SMA 200 Band")
+len200   = input.int(200, "Length", minval=1, group="SMA 200 Band")
+pct200   = input.float(1.0, "Band Width %", minval=0, step=0.1, group="SMA 200 Band")
+color200 = input.color(color.red, "Color", group="SMA 200 Band")
+fill200  = input.bool(true, "Fill Band", group="SMA 200 Band")
+
+// ---------------------------------------------------------------------------
+// Session VWAP -- ta.vwap() resets automatically at the start of each new
+// session, matching the standard day-trading VWAP (no anchor-period option
+// exposed since that's not what was asked for -- this mirrors a plain,
+// default-configuration VWAP).
+// ---------------------------------------------------------------------------
+vwapVal = ta.vwap(hlc3)
+plot(showVwap ? vwapVal : na, "VWAP", color=vwapColor, linewidth=vwapWidth)
+
+// ---------------------------------------------------------------------------
+// SMA bands: an envelope offset by a fixed percent above/below the SMA --
+// same construction as a standard "Moving Average Bands" tool, split into
+// two independently configurable groups (50 and 200) so either can be
+// toggled, colored, or resized on its own.
+// ---------------------------------------------------------------------------
+sma50    = ta.sma(close, len50)
+upper50  = sma50 * (1 + pct50 / 100)
+lower50  = sma50 * (1 - pct50 / 100)
+
+sma200   = ta.sma(close, len200)
+upper200 = sma200 * (1 + pct200 / 100)
+lower200 = sma200 * (1 - pct200 / 100)
+
+p50u = plot(show50 ? upper50 : na, "SMA 50 Upper", color=color.new(color50, 40))
+p50b = plot(show50 ? sma50 : na, "SMA 50", color=color50, linewidth=2)
+p50l = plot(show50 ? lower50 : na, "SMA 50 Lower", color=color.new(color50, 40))
+fill(p50u, p50l, color=fill50 ? color.new(color50, 85) : na, title="SMA 50 Band Fill")
+
+p200u = plot(show200 ? upper200 : na, "SMA 200 Upper", color=color.new(color200, 40))
+p200b = plot(show200 ? sma200 : na, "SMA 200", color=color200, linewidth=2)
+p200l = plot(show200 ? lower200 : na, "SMA 200 Lower", color=color.new(color200, 40))
+fill(p200u, p200l, color=fill200 ? color.new(color200, 85) : na, title="SMA 200 Band Fill")
