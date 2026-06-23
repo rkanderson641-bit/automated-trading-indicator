@@ -47,7 +47,7 @@ calculate_sma(prices, window=3)
 
 Pine Script is a different language from Python, so these are separate,
 hand-written implementations — they can't be pasted into the Pine Editor
-directly from `main.py`. There are eight independent indicators so each
+directly from `main.py`. There are nine independent indicators so each
 piece can be added or removed on its own to declutter the chart without
 touching the others:
 
@@ -210,6 +210,22 @@ name alone:
 - **SMA 50 / SMA 200**: plain single moving-average lines — despite the
   "band" naming, the actual reference indicators have no envelope or
   offset at all, just Length, Source, and one plotted line each.
+
+### [pine/order_volume.pine](pine/order_volume.pine)
+
+A standalone order-flow estimator, rebuilding natively what was
+previously a free indicator called "Order Volume" (legend tag `OV`).
+Verified against its actual settings dialog: a single `Granularity`
+input (default `1S`) and three plots (Buy Volume, Sell Volume,
+Difference). Plain OHLCV data has no real bid/ask tick data, so this
+uses the standard proxy: `request.security_lower_tf()` samples every
+sub-bar at the chosen granularity within each chart bar, and each
+sub-bar's own close-vs-open decides which side its volume counts
+toward (a doji sub-bar counts toward neither). Buy Volume and Sell
+Volume are summed separately and plotted as columns above/below zero
+(Sell negated so it mirrors Buy downward); Difference (Buy − Sell) is
+the net per-bar estimate, plotted as a line. Renders in its own pane,
+not overlaid on price.
 
 ### Using any script
 
