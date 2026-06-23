@@ -246,6 +246,17 @@ kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4
 longCondition  = confirmedLongSetup and overallBias > 0
 shortCondition = confirmedShortSetup and overallBias < 0
 
+// Cumulative funnel counters -- not used for any trading logic, purely so
+// a "why are there zero/few trades" question can be answered by reading
+// numbers instead of scrolling months of chart history by eye.
+var int totalConfirmed = 0
+var int totalAligned   = 0
+var int totalEntered   = 0
+if confirmedLongSetup or confirmedShortSetup
+    totalConfirmed += 1
+if longCondition or shortCondition
+    totalAligned += 1
+
 var float activeStopLevel   = na
 var float activeTargetLevel = na
 
@@ -257,12 +268,14 @@ if longCondition and strategy.position_size == 0
     strategy.entry("Long", strategy.long)
     activeStopLevel   := low
     activeTargetLevel := nearestAbove(kplLevels, close)
+    totalEntered += 1
     label.new(bar_index, low, text="LONG ENTRY", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
 
 if shortCondition and strategy.position_size == 0
     strategy.entry("Short", strategy.short)
     activeStopLevel   := high
     activeTargetLevel := nearestBelow(kplLevels, close)
+    totalEntered += 1
     label.new(bar_index, high, text="SHORT ENTRY", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
 
 if strategy.position_size > 0 and bullAction and low > activeStopLevel
@@ -288,7 +301,7 @@ plot(strategy.position_size != 0 ? activeTargetLevel : na, title="Active Target"
 // numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 7, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -303,3 +316,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 7, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 7, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
