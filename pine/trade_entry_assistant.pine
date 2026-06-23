@@ -202,15 +202,93 @@ if inTradingWindow and confirmedShortSetup
     label.new(bar_index, high, text="LTF SHORT SETUP", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
 
 // ---------------------------------------------------------------------------
+// Step 4: entry/risk/target -- the step that finally places real trades.
+//
+// Entry requires BOTH Step 3's confirmed setup AND Step 1's overall HTF
+// bias agreeing with the trade direction -- "bias comes first" is the
+// whole premise of Step 1, so a confirmed LTF setup against the HTF bias is
+// skipped, not taken. strategy.entry() fills at the next bar's open by
+// Pine's default order model, which is also the realistic, non-repainting
+// way to do this -- no same-bar-close fill is forced.
+//
+// Initial stop ("risk candle") is just the confirming action candle's own
+// low (long) / high (short) -- the same bar Step 3 confirms on. It only
+// ever trails tighter afterward, to each NEW action candle's low/high in
+// the trade's direction (reusing bullAction/bearAction from Step 3),
+// never loosens.
+//
+// Target is the nearest of Step 1's 12 already-computed KPL levels beyond
+// entry in the trade direction ("the next KPL zone out" / "magnet level"),
+// fixed at entry rather than re-evaluated every bar.
+//
+// One trade at a time: a fresh signal while already in a position is
+// ignored (strategy.position_size == 0 guards every entry), not reversed
+// or stacked, so the existing bracket plays out untouched.
+// ---------------------------------------------------------------------------
+nearestAbove(array<float> arr, float refPrice) =>
+    float nearest = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v > refPrice and (na(nearest) or v < nearest)
+            nearest := v
+    nearest
+
+nearestBelow(array<float> arr, float refPrice) =>
+    float nearest = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v < refPrice and (na(nearest) or v > nearest)
+            nearest := v
+    nearest
+
+kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618)
+
+longCondition  = confirmedLongSetup and overallBias > 0
+shortCondition = confirmedShortSetup and overallBias < 0
+
+var float activeStopLevel   = na
+var float activeTargetLevel = na
+
+if strategy.position_size == 0
+    activeStopLevel   := na
+    activeTargetLevel := na
+
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := nearestAbove(kplLevels, close)
+    label.new(bar_index, low, text="LONG ENTRY", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
+
+if shortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := nearestBelow(kplLevels, close)
+    label.new(bar_index, high, text="SHORT ENTRY", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+
+if strategy.position_size > 0 and bullAction and low > activeStopLevel
+    activeStopLevel := low
+if strategy.position_size < 0 and bearAction and high < activeStopLevel
+    activeStopLevel := high
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=activeStopLevel, limit=activeTargetLevel)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop=activeStopLevel, limit=activeTargetLevel)
+
+plot(strategy.position_size != 0 ? activeStopLevel : na, title="Active Stop", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 ? activeTargetLevel : na, title="Active Target", color=color.green, style=plot.style_linebr, linewidth=2)
+
+// ---------------------------------------------------------------------------
 // Live readout of each timeframe's bias, how many KPLs (out of up to 4:
 // SMA50, SMA200, Fib50, Fib618) reacted in each direction, the fib levels
-// themselves, the current time-of-day gate state, and the Step 3 pending
-// watch -- so the reaction logic, the auto-detected swing, the gate
-// windows, and the LTF sequence can all be checked against real price
-// action and real numbers instead of just trusted.
+// themselves, the current time-of-day gate state, the Step 3 pending
+// watch, and the Step 4 position/stop/target -- so the reaction logic, the
+// auto-detected swing, the gate windows, the LTF sequence, and the live
+// trade management can all be checked against real price action and real
+// numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 7, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -223,3 +301,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
     table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
