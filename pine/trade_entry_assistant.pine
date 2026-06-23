@@ -87,9 +87,12 @@ biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 // approximate ("~11:15-11:20"), so they're inputs here rather than numbers
 // silently pinned to one guess.
 //
-// This only computes the gate state for now -- nothing reads it yet, since
-// Step 1/3 don't gate themselves on it. It starts being enforced once
-// Step 4 adds actual entries.
+// Step 3 enforces this as a hard reset, not a pause: outside a trading
+// window its whole detection sequence is suppressed, and any watch already
+// in progress when the window closes is cancelled rather than frozen to
+// resume later, since each window is its own fresh opportunity. Step 1
+// still computes regardless of the gate -- bias itself isn't time-gated,
+// only whether Step 3 acts on it.
 // ---------------------------------------------------------------------------
 inMorningWindow   = not na(time(timeframe.period, morningSession, "America/New_York"))
 inLunchLull       = not na(time(timeframe.period, lunchSession, "America/New_York"))
@@ -159,7 +162,15 @@ confirmedLongSetup  = false
 confirmedShortSetup = false
 dojiJustConfirmed   = false
 
-if ltfBullHits > 0 or ltfBearHits > 0
+// Step 2's gate takes priority over every other branch below: outside a
+// trading window, Step 3 is fully suppressed, not just paused. A watch
+// already in progress when the window closes is reset, not frozen to
+// resume later -- per the video, each window is its own fresh opportunity,
+// not a continuation of whatever was forming before lunch.
+if not inTradingWindow
+    pendingDir   := 0
+    pendingStage := 0
+else if ltfBullHits > 0 or ltfBearHits > 0
     pendingDir      := ltfBullHits > 0 ? 1 : -1
     pendingStage    := 1
     pendingStartBar := bar_index
@@ -179,15 +190,15 @@ else if pendingDir != 0 and pendingStage == 2
         pendingDir   := 0
         pendingStage := 0
 
-if ltfBullHits > 0
+if inTradingWindow and ltfBullHits > 0
     label.new(bar_index, low, text="KPL React+", style=label.style_circle, color=color.new(color.green, 40), size=size.tiny)
-if ltfBearHits > 0
+if inTradingWindow and ltfBearHits > 0
     label.new(bar_index, high, text="KPL React-", style=label.style_circle, color=color.new(color.red, 40), size=size.tiny)
-if dojiJustConfirmed
+if inTradingWindow and dojiJustConfirmed
     label.new(bar_index, pendingDir == 1 ? low : high, text="DOJI", style=label.style_circle, color=color.new(color.yellow, 30), size=size.tiny)
-if confirmedLongSetup
+if inTradingWindow and confirmedLongSetup
     label.new(bar_index, low, text="LTF LONG SETUP", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
-if confirmedShortSetup
+if inTradingWindow and confirmedShortSetup
     label.new(bar_index, high, text="LTF SHORT SETUP", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
 
 // ---------------------------------------------------------------------------
@@ -211,4 +222,4 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 0, 4, "Gate", text_color=color.white, bgcolor=color.new(color.orange, 60))
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
-    table.cell(dbgTable, 1, 5, pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
