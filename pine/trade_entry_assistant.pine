@@ -1,5 +1,15 @@
 //@version=6
-strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000)
+strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=25000, margin_long=5, margin_short=5)
+
+// margin_long/margin_short are set explicitly because Pine defaults to
+// requiring 100% of notional value as margin when unset -- for 1 MNQ
+// contract ($2/point, ~$58-60k notional at current prices) that default
+// would silently reject every entry against any reasonably-sized
+// initial_capital, with no error: the script's own counters still believe
+// strategy.entry() succeeded, only the broker-emulator layer underneath
+// rejects the fill. 5% approximates real futures margin (a small fraction
+// of notional, which is the whole point of trading futures), not the
+// unrealistic default.
 
 // ---------------------------------------------------------------------------
 // Inputs
