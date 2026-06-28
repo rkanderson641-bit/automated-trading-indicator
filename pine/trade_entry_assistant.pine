@@ -20,6 +20,8 @@ lunchSession     = input.session("1120-1300", "Lunch Lull (avoid)", group="Step 
 afternoonSession = input.session("1300-1400", "Afternoon Window", group="Step 2: Time-of-Day Gate")
 dojiBodyRatio    = input.float(0.1, "Doji Max Body (x candle range)", minval=0.01, maxval=1.0, step=0.01, group="Step 3: LTF Reaction")
 setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group="Step 3: LTF Reaction")
+breakevenTriggerPct = input.float(0.2, "Breakeven Activation (% of reward distance)", minval=0.01, maxval=1.0, step=0.01, group="Step 4: Breakeven")
+breakevenBufferTicks = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -267,12 +269,16 @@ if confirmedLongSetup or confirmedShortSetup
 if longCondition or shortCondition
     totalAligned += 1
 
-var float activeStopLevel   = na
-var float activeTargetLevel = na
+var float activeStopLevel    = na
+var float activeTargetLevel  = na
+var bool  breakevenArmedLong  = false
+var bool  breakevenArmedShort = false
 
 if strategy.position_size == 0
-    activeStopLevel   := na
-    activeTargetLevel := na
+    activeStopLevel     := na
+    activeTargetLevel   := na
+    breakevenArmedLong  := false
+    breakevenArmedShort := false
 
 if longCondition and strategy.position_size == 0
     strategy.entry("Long", strategy.long)
@@ -292,6 +298,47 @@ if strategy.position_size > 0 and bullAction and low > activeStopLevel
     activeStopLevel := low
 if strategy.position_size < 0 and bearAction and high < activeStopLevel
     activeStopLevel := high
+
+// Breakeven safety net: protects against giving back a strong initial move
+// if the trend reverses. Arms once a candle CLOSES beyond breakevenTriggerPct
+// (default 20%) of the distance from entry to target -- a candle body
+// close, not just a wick touch, per explicit choice -- after which the stop
+// is floored at breakeven plus a small tick buffer (also an explicit
+// choice, rather than a dead-even scratch) for the rest of the trade.
+// Combined with the action-candle trailing stop above via math.max (long) /
+// math.min (short), so breakeven only ever pushes the stop toward a BETTER
+// level, never loosens whichever is already in place. Armed once per
+// trade, never un-armed until flat (reset above). If activeTargetLevel is
+// na (the no-KPL-beyond-entry edge case from Step 4's target logic), the
+// reward distance is na and breakeven simply never arms for that trade --
+// a safe, intentional fallback, not an oversight.
+breakevenBuffer = breakevenBufferTicks * syminfo.mintick
+breakevenJustArmedLong  = false
+breakevenJustArmedShort = false
+
+if strategy.position_size > 0 and not breakevenArmedLong
+    rewardDistanceLong      = activeTargetLevel - strategy.position_avg_price
+    breakevenActivationLong = strategy.position_avg_price + breakevenTriggerPct * rewardDistanceLong
+    if close > breakevenActivationLong
+        breakevenArmedLong     := true
+        breakevenJustArmedLong := true
+
+if strategy.position_size < 0 and not breakevenArmedShort
+    rewardDistanceShort      = strategy.position_avg_price - activeTargetLevel
+    breakevenActivationShort = strategy.position_avg_price - breakevenTriggerPct * rewardDistanceShort
+    if close < breakevenActivationShort
+        breakevenArmedShort     := true
+        breakevenJustArmedShort := true
+
+if strategy.position_size > 0 and breakevenArmedLong
+    activeStopLevel := math.max(activeStopLevel, strategy.position_avg_price + breakevenBuffer)
+if strategy.position_size < 0 and breakevenArmedShort
+    activeStopLevel := math.min(activeStopLevel, strategy.position_avg_price - breakevenBuffer)
+
+if breakevenJustArmedLong
+    label.new(bar_index, low, text="BE ARMED", style=label.style_circle, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
+if breakevenJustArmedShort
+    label.new(bar_index, high, text="BE ARMED", style=label.style_circle, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
 
 if strategy.position_size > 0
     strategy.exit("Long Exit", "Long", stop=activeStopLevel, limit=activeTargetLevel)
@@ -324,7 +371,8 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
     table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
+    beStatus = strategy.position_size > 0 and breakevenArmedLong ? " [BE armed]" : strategy.position_size < 0 and breakevenArmedShort ? " [BE armed]" : ""
     table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
-    table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick) + beStatus, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 7, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 7, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
