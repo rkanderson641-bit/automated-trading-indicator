@@ -316,19 +316,28 @@ breakevenBuffer = breakevenBufferTicks * syminfo.mintick
 breakevenJustArmedLong  = false
 breakevenJustArmedShort = false
 
-if strategy.position_size > 0 and not breakevenArmedLong
-    rewardDistanceLong      = activeTargetLevel - strategy.position_avg_price
-    breakevenActivationLong = strategy.position_avg_price + breakevenTriggerPct * rewardDistanceLong
-    if close > breakevenActivationLong
-        breakevenArmedLong     := true
-        breakevenJustArmedLong := true
+// Computed unconditionally (not just pre-arm) so the activation level and
+// reward distance are always readable in the debug table below for ANY
+// open trade -- added after a 39-trade backtest showed breakeven never
+// armed once, including on a visibly long-held winning trade, which rules
+// out "trades just resolve too fast" as the explanation. Likely cause,
+// not yet confirmed: target is the nearest KPL ABOVE/BELOW entry, and
+// during a sustained trend the nearest one available can be a far-away
+// Daily-timeframe level (the debug table's own Daily Fib50/618 sit
+// thousands of points from current price in a trending market), making
+// the reward distance -- and so 20% of it -- much bigger than it looks.
+longRewardDistance  = strategy.position_size > 0 ? activeTargetLevel - strategy.position_avg_price : na
+shortRewardDistance = strategy.position_size < 0 ? strategy.position_avg_price - activeTargetLevel : na
+breakevenActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + breakevenTriggerPct * longRewardDistance : na
+breakevenActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - breakevenTriggerPct * shortRewardDistance : na
 
-if strategy.position_size < 0 and not breakevenArmedShort
-    rewardDistanceShort      = strategy.position_avg_price - activeTargetLevel
-    breakevenActivationShort = strategy.position_avg_price - breakevenTriggerPct * rewardDistanceShort
-    if close < breakevenActivationShort
-        breakevenArmedShort     := true
-        breakevenJustArmedShort := true
+if strategy.position_size > 0 and not breakevenArmedLong and close > breakevenActivationLong
+    breakevenArmedLong     := true
+    breakevenJustArmedLong := true
+
+if strategy.position_size < 0 and not breakevenArmedShort and close < breakevenActivationShort
+    breakevenArmedShort     := true
+    breakevenJustArmedShort := true
 
 if strategy.position_size > 0 and breakevenArmedLong
     activeStopLevel := math.max(activeStopLevel, strategy.position_avg_price + breakevenBuffer)
@@ -371,7 +380,7 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
     table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
-    beStatus = strategy.position_size > 0 and breakevenArmedLong ? " [BE armed]" : strategy.position_size < 0 and breakevenArmedShort ? " [BE armed]" : ""
+    beStatus = strategy.position_size > 0 ? (breakevenArmedLong ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationLong, format.mintick) + " (reward " + str.tostring(longRewardDistance, format.mintick) + ")") : strategy.position_size < 0 ? (breakevenArmedShort ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationShort, format.mintick) + " (reward " + str.tostring(shortRewardDistance, format.mintick) + ")") : ""
     table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick) + beStatus, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 7, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
