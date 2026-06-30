@@ -23,6 +23,7 @@ setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group=
 breakevenTriggerPoints  = input.float(10.0, "Breakeven Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
 trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
+maxRiskDollars          = input.float(400.0, "Max Risk Per Trade ($)", minval=1.0, step=25, group="Step 4: Breakeven")
 vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
@@ -396,6 +397,20 @@ if vwapShortCondition and strategy.position_size == 0
     activeTargetLevel := vwapLevel
     totalEntered += 1
     label.new(bar_index, high, text="VWAP REV SHORT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
+
+// Max dollar risk cap: tightens (never loosens) the stop so the position's
+// own low/high never risks more than maxRiskDollars, using the instrument's
+// actual point value (syminfo.pointvalue) rather than an assumed number --
+// this works correctly across different symbols/contract sizes. Combines
+// with breakeven/trailing below via the same math.max/min pattern, so all
+// three stop adjustments only ever tighten, never loosen, whichever is
+// already in place.
+if strategy.position_size > 0
+    maxRiskPointsLong = maxRiskDollars / (syminfo.pointvalue * math.abs(strategy.position_size))
+    activeStopLevel := math.max(activeStopLevel, strategy.position_avg_price - maxRiskPointsLong)
+if strategy.position_size < 0
+    maxRiskPointsShort = maxRiskDollars / (syminfo.pointvalue * math.abs(strategy.position_size))
+    activeStopLevel := math.min(activeStopLevel, strategy.position_avg_price + maxRiskPointsShort)
 
 trailingActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + trailingActivationPoints : na
 trailingActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - trailingActivationPoints : na
