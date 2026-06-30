@@ -25,6 +25,7 @@ breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, gro
 trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 maxRiskDollars          = input.float(400.0, "Max Risk Per Trade ($)", minval=1.0, step=25, group="Step 4: Breakeven")
 vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
+vwapAlignBufferPoints   = input.float(3.0, "VWAP Alignment Buffer (points)", minval=0.0, step=0.25, group="VWAP Reversal")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -337,15 +338,17 @@ nearestBelow(array<float> arr, float refPrice) =>
 
 kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618, vwapLevel)
 
-// VWAP directional filter: requires price on the trade's side of VWAP at
-// entry (above for longs, below for shorts) -- a confluence filter on the
-// EXISTING KPL entries, not a separate trigger. Unlike the reversal watch
-// (which added new trades that consistently lost), this can only REMOVE
-// KPL setups that fire against the intraday volume-weighted trend, never
-// add trades. If vwapLevel is na (no volume data yet), the filter is
-// skipped rather than blocking every entry.
-vwapAlignedLong  = na(vwapLevel) or close > vwapLevel
-vwapAlignedShort = na(vwapLevel) or close < vwapLevel
+// VWAP directional filter: requires price to clear VWAP by at least
+// vwapAlignBufferPoints (not just barely cross it) at entry -- a confluence
+// filter on the EXISTING KPL entries, not a separate trigger. Unlike the
+// reversal watch (which added new trades that consistently lost), this can
+// only REMOVE KPL setups that fire against or right at the intraday
+// volume-weighted trend, never add trades. The buffer cuts out marginal
+// whipsaw cases where price is technically on the right side of VWAP but
+// only by a tick or two. If vwapLevel is na (no volume data yet), the
+// filter is skipped rather than blocking every entry.
+vwapAlignedLong  = na(vwapLevel) or close > vwapLevel + vwapAlignBufferPoints
+vwapAlignedShort = na(vwapLevel) or close < vwapLevel - vwapAlignBufferPoints
 
 longCondition  = confirmedLongSetup and overallBias > 0 and vwapAlignedLong
 shortCondition = confirmedShortSetup and overallBias < 0 and vwapAlignedShort
