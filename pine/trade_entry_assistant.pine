@@ -23,6 +23,7 @@ setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group=
 breakevenTriggerPoints  = input.float(10.0, "Breakeven Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
 trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
+vwapDivergencePoints    = input.float(20.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -236,6 +237,57 @@ if inTradingWindow and confirmedShortSetup
     label.new(bar_index, high, text="LTF SHORT SETUP", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
 
 // ---------------------------------------------------------------------------
+// VWAP divergence reversal watch: parallel to the KPL reaction sequence.
+// When price extends vwapDivergencePoints beyond VWAP, the model watches for
+// the same doji -> action candle sequence, but the implied trade direction is
+// BACK toward VWAP (mean-reversion), and the target at entry time is VWAP
+// itself rather than the nearest KPL. Reuses isDoji/bullAction/bearAction
+// from Step 3. Same time-of-day gate and HTF bias requirements apply.
+// ---------------------------------------------------------------------------
+vwapExtendedLong  = not na(vwapLevel) and close < vwapLevel - vwapDivergencePoints
+vwapExtendedShort = not na(vwapLevel) and close > vwapLevel + vwapDivergencePoints
+
+var int   vwapRevDir      = 0
+var int   vwapRevStage    = 0
+var int   vwapRevStartBar = na
+
+confirmedVwapLong  = false
+confirmedVwapShort = false
+vwapRevDojiConfirmed = false
+
+if not inTradingWindow
+    vwapRevDir   := 0
+    vwapRevStage := 0
+else if vwapExtendedLong
+    vwapRevDir      := 1
+    vwapRevStage    := 1
+    vwapRevStartBar := bar_index
+else if vwapExtendedShort
+    vwapRevDir      := -1
+    vwapRevStage    := 1
+    vwapRevStartBar := bar_index
+else if vwapRevDir != 0 and bar_index - vwapRevStartBar > setupExpiryBars
+    vwapRevDir   := 0
+    vwapRevStage := 0
+else if vwapRevDir != 0 and vwapRevStage == 1 and isDoji
+    vwapRevStage        := 2
+    vwapRevDojiConfirmed := true
+else if vwapRevDir != 0 and vwapRevStage == 2
+    if vwapRevDir == 1 and bullAction
+        confirmedVwapLong := true
+        vwapRevDir   := 0
+        vwapRevStage := 0
+    else if vwapRevDir == -1 and bearAction
+        confirmedVwapShort := true
+        vwapRevDir   := 0
+        vwapRevStage := 0
+
+if inTradingWindow and vwapExtendedLong
+    label.new(bar_index, low, text="VWAP Ext↑", style=label.style_circle, color=color.new(color.purple, 50), size=size.tiny)
+if inTradingWindow and vwapExtendedShort
+    label.new(bar_index, high, text="VWAP Ext↓", style=label.style_circle, color=color.new(color.purple, 50), size=size.tiny)
+
+// ---------------------------------------------------------------------------
 // Step 4: entry/risk/target -- the step that finally places real trades.
 //
 // Entry requires BOTH Step 3's confirmed setup AND Step 1's overall HTF
@@ -280,15 +332,19 @@ kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4
 longCondition  = confirmedLongSetup and overallBias > 0
 shortCondition = confirmedShortSetup and overallBias < 0
 
+// VWAP reversal conditions: same bias gate, target locked to VWAP at entry
+vwapLongCondition  = confirmedVwapLong  and overallBias > 0
+vwapShortCondition = confirmedVwapShort and overallBias < 0
+
 // Cumulative funnel counters -- not used for any trading logic, purely so
 // a "why are there zero/few trades" question can be answered by reading
 // numbers instead of scrolling months of chart history by eye.
 var int totalConfirmed = 0
 var int totalAligned   = 0
 var int totalEntered   = 0
-if confirmedLongSetup or confirmedShortSetup
+if confirmedLongSetup or confirmedShortSetup or confirmedVwapLong or confirmedVwapShort
     totalConfirmed += 1
-if longCondition or shortCondition
+if longCondition or shortCondition or vwapLongCondition or vwapShortCondition
     totalAligned += 1
 
 var float activeStopLevel     = na
@@ -319,6 +375,20 @@ if shortCondition and strategy.position_size == 0
     activeTargetLevel := nearestBelow(kplLevels, close)
     totalEntered += 1
     label.new(bar_index, high, text="SHORT ENTRY", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+
+if vwapLongCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := vwapLevel
+    totalEntered += 1
+    label.new(bar_index, low, text="VWAP REV LONG", style=label.style_label_up, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
+
+if vwapShortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := vwapLevel
+    totalEntered += 1
+    label.new(bar_index, high, text="VWAP REV SHORT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
 
 trailingActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + trailingActivationPoints : na
 trailingActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - trailingActivationPoints : na
