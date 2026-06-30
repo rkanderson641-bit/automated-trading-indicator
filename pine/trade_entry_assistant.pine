@@ -337,8 +337,18 @@ nearestBelow(array<float> arr, float refPrice) =>
 
 kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618, vwapLevel)
 
-longCondition  = confirmedLongSetup and overallBias > 0
-shortCondition = confirmedShortSetup and overallBias < 0
+// VWAP directional filter: requires price on the trade's side of VWAP at
+// entry (above for longs, below for shorts) -- a confluence filter on the
+// EXISTING KPL entries, not a separate trigger. Unlike the reversal watch
+// (which added new trades that consistently lost), this can only REMOVE
+// KPL setups that fire against the intraday volume-weighted trend, never
+// add trades. If vwapLevel is na (no volume data yet), the filter is
+// skipped rather than blocking every entry.
+vwapAlignedLong  = na(vwapLevel) or close > vwapLevel
+vwapAlignedShort = na(vwapLevel) or close < vwapLevel
+
+longCondition  = confirmedLongSetup and overallBias > 0 and vwapAlignedLong
+shortCondition = confirmedShortSetup and overallBias < 0 and vwapAlignedShort
 
 // VWAP reversal conditions: same bias gate, target locked to VWAP at entry
 vwapLongCondition  = confirmedVwapLong  and overallBias > 0
