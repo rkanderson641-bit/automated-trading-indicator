@@ -15,13 +15,14 @@ strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qt
 // Inputs
 // ---------------------------------------------------------------------------
 fibLookback      = input.int(100, "Fib Swing Lookback (bars, per timeframe)", minval=2, group="Step 1: HTF Bias")
-morningSession   = input.session("1000-1120", "Morning Trend Window", group="Step 2: Time-of-Day Gate")
-lunchSession     = input.session("1120-1300", "Lunch Lull (avoid)", group="Step 2: Time-of-Day Gate")
-afternoonSession = input.session("1300-1400", "Afternoon Window", group="Step 2: Time-of-Day Gate")
+morningSession   = input.session("0900-1020", "Morning Trend Window", group="Step 2: Time-of-Day Gate")
+lunchSession     = input.session("1100-1200", "Lunch Lull (avoid)", group="Step 2: Time-of-Day Gate")
+afternoonSession = input.session("1200-1300", "Afternoon Window", group="Step 2: Time-of-Day Gate")
 dojiBodyRatio    = input.float(0.1, "Doji Max Body (x candle range)", minval=0.01, maxval=1.0, step=0.01, group="Step 3: LTF Reaction")
 setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group="Step 3: LTF Reaction")
-breakevenTriggerPct = input.float(0.2, "Breakeven Activation (% of reward distance)", minval=0.01, maxval=1.0, step=0.01, group="Step 4: Breakeven")
-breakevenBufferTicks = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
+breakevenTriggerPoints  = input.float(10.0, "Breakeven Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
+breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
+trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,24 @@ overallBias = biasD + bias4H + bias1H
 biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 
 // ---------------------------------------------------------------------------
+// VWAP (5-min chart, native calculation)
+// Anchored to the current session (resets each trading day). Same
+// wick-vs-close reaction discipline as the 12 KPL levels: bullish reaction
+// = wick touches VWAP from above, close holds above it; bearish = wick
+// touches from below, close holds below it.
+// ---------------------------------------------------------------------------
+var float vwapNumerator   = 0.0
+var float vwapDenominator = 0.0
+isNewSession = ta.change(time("D")) != 0
+if isNewSession
+    vwapNumerator   := 0.0
+    vwapDenominator := 0.0
+typicalPrice = (high + low + close) / 3
+vwapNumerator   += typicalPrice * volume
+vwapDenominator += volume
+vwapLevel = vwapDenominator != 0 ? vwapNumerator / vwapDenominator : na
+
+// ---------------------------------------------------------------------------
 // Step 2: time-of-day gate (indices schedule -- this chart is Nasdaq-100
 // futures; the source video gives gold a different schedule, which isn't
 // covered here since nothing on this chart needs it). A HARD filter, not a
@@ -106,9 +125,9 @@ biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
 // still computes regardless of the gate -- bias itself isn't time-gated,
 // only whether Step 3 acts on it.
 // ---------------------------------------------------------------------------
-inMorningWindow   = not na(time(timeframe.period, morningSession, "America/New_York"))
-inLunchLull       = not na(time(timeframe.period, lunchSession, "America/New_York"))
-inAfternoonWindow = not na(time(timeframe.period, afternoonSession, "America/New_York"))
+inMorningWindow   = not na(time(timeframe.period, morningSession, "America/Chicago"))
+inLunchLull       = not na(time(timeframe.period, lunchSession, "America/Chicago"))
+inAfternoonWindow = not na(time(timeframe.period, afternoonSession, "America/Chicago"))
 inTradingWindow   = inMorningWindow or inAfternoonWindow
 
 gateText = inMorningWindow ? "Morning window" : inLunchLull ? "Lunch lull (avoid)" : inAfternoonWindow ? "Afternoon window" : "Outside model windows"
@@ -150,11 +169,15 @@ bearReact(float level) => high >= level and close < level
 
 ltfBullHits = (bullReact(smaD50) ? 1 : 0) + (bullReact(smaD200) ? 1 : 0) + (bullReact(fibD50) ? 1 : 0) + (bullReact(fibD618) ? 1 : 0) +
               (bullReact(sma4H50) ? 1 : 0) + (bullReact(sma4H200) ? 1 : 0) + (bullReact(fib4H50) ? 1 : 0) + (bullReact(fib4H618) ? 1 : 0) +
-              (bullReact(sma1H50) ? 1 : 0) + (bullReact(sma1H200) ? 1 : 0) + (bullReact(fib1H50) ? 1 : 0) + (bullReact(fib1H618) ? 1 : 0)
+              (bullReact(sma1H50) ? 1 : 0) + (bullReact(sma1H200) ? 1 : 0) + (bullReact(fib1H50) ? 1 : 0) + (bullReact(fib1H618) ? 1 : 0) +
+              (not na(vwapLevel) and bullReact(vwapLevel) ? 1 : 0)
 
 ltfBearHits = (bearReact(smaD50) ? 1 : 0) + (bearReact(smaD200) ? 1 : 0) + (bearReact(fibD50) ? 1 : 0) + (bearReact(fibD618) ? 1 : 0) +
               (bearReact(sma4H50) ? 1 : 0) + (bearReact(sma4H200) ? 1 : 0) + (bearReact(fib4H50) ? 1 : 0) + (bearReact(fib4H618) ? 1 : 0) +
-              (bearReact(sma1H50) ? 1 : 0) + (bearReact(sma1H200) ? 1 : 0) + (bearReact(fib1H50) ? 1 : 0) + (bearReact(fib1H618) ? 1 : 0)
+              (bearReact(sma1H50) ? 1 : 0) + (bearReact(sma1H200) ? 1 : 0) + (bearReact(fib1H50) ? 1 : 0) + (bearReact(fib1H618) ? 1 : 0) +
+              (not na(vwapLevel) and bearReact(vwapLevel) ? 1 : 0)
+
+isDoji     = math.abs(close - open) <= dojiBodyRatio * (high - low)
 
 haClose = (open + high + low + close) / 4
 var float haOpen = na
@@ -162,7 +185,6 @@ haOpen := na(haOpen[1]) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
 haHigh  = math.max(high, math.max(haOpen, haClose))
 haLow   = math.min(low, math.min(haOpen, haClose))
 
-isDoji     = math.abs(close - open) <= dojiBodyRatio * (high - low)
 bullAction = haClose > haOpen and haLow == haOpen
 bearAction = haClose < haOpen and haHigh == haOpen
 
@@ -253,7 +275,7 @@ nearestBelow(array<float> arr, float refPrice) =>
             nearest := v
     nearest
 
-kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618)
+kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618, vwapLevel)
 
 longCondition  = confirmedLongSetup and overallBias > 0
 shortCondition = confirmedShortSetup and overallBias < 0
@@ -269,16 +291,20 @@ if confirmedLongSetup or confirmedShortSetup
 if longCondition or shortCondition
     totalAligned += 1
 
-var float activeStopLevel    = na
-var float activeTargetLevel  = na
+var float activeStopLevel     = na
+var float activeTargetLevel   = na
 var bool  breakevenArmedLong  = false
 var bool  breakevenArmedShort = false
+var bool  trailingActiveLong  = false
+var bool  trailingActiveShort = false
 
 if strategy.position_size == 0
-    activeStopLevel     := na
-    activeTargetLevel   := na
-    breakevenArmedLong  := false
-    breakevenArmedShort := false
+    activeStopLevel      := na
+    activeTargetLevel    := na
+    breakevenArmedLong   := false
+    breakevenArmedShort  := false
+    trailingActiveLong   := false
+    trailingActiveShort  := false
 
 if longCondition and strategy.position_size == 0
     strategy.entry("Long", strategy.long)
@@ -294,9 +320,17 @@ if shortCondition and strategy.position_size == 0
     totalEntered += 1
     label.new(bar_index, high, text="SHORT ENTRY", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
 
-if strategy.position_size > 0 and bullAction and low > activeStopLevel
+trailingActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + trailingActivationPoints : na
+trailingActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - trailingActivationPoints : na
+
+if strategy.position_size > 0 and not trailingActiveLong and close > trailingActivationLong
+    trailingActiveLong := true
+if strategy.position_size < 0 and not trailingActiveShort and close < trailingActivationShort
+    trailingActiveShort := true
+
+if strategy.position_size > 0 and trailingActiveLong and bullAction and low > activeStopLevel
     activeStopLevel := low
-if strategy.position_size < 0 and bearAction and high < activeStopLevel
+if strategy.position_size < 0 and trailingActiveShort and bearAction and high < activeStopLevel
     activeStopLevel := high
 
 // Breakeven safety net: protects against giving back a strong initial move
@@ -316,20 +350,8 @@ breakevenBuffer = breakevenBufferTicks * syminfo.mintick
 breakevenJustArmedLong  = false
 breakevenJustArmedShort = false
 
-// Computed unconditionally (not just pre-arm) so the activation level and
-// reward distance are always readable in the debug table below for ANY
-// open trade -- added after a 39-trade backtest showed breakeven never
-// armed once, including on a visibly long-held winning trade, which rules
-// out "trades just resolve too fast" as the explanation. Likely cause,
-// not yet confirmed: target is the nearest KPL ABOVE/BELOW entry, and
-// during a sustained trend the nearest one available can be a far-away
-// Daily-timeframe level (the debug table's own Daily Fib50/618 sit
-// thousands of points from current price in a trending market), making
-// the reward distance -- and so 20% of it -- much bigger than it looks.
-longRewardDistance  = strategy.position_size > 0 ? activeTargetLevel - strategy.position_avg_price : na
-shortRewardDistance = strategy.position_size < 0 ? strategy.position_avg_price - activeTargetLevel : na
-breakevenActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + breakevenTriggerPct * longRewardDistance : na
-breakevenActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - breakevenTriggerPct * shortRewardDistance : na
+breakevenActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + breakevenTriggerPoints : na
+breakevenActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - breakevenTriggerPoints : na
 
 if strategy.position_size > 0 and not breakevenArmedLong and close > breakevenActivationLong
     breakevenArmedLong     := true
@@ -356,6 +378,7 @@ if strategy.position_size < 0
 
 plot(strategy.position_size != 0 ? activeStopLevel : na, title="Active Stop", color=color.red, style=plot.style_linebr, linewidth=2)
 plot(strategy.position_size != 0 ? activeTargetLevel : na, title="Active Target", color=color.green, style=plot.style_linebr, linewidth=2)
+plot(vwapLevel, title="VWAP", color=color.new(color.purple, 20), linewidth=1)
 
 // ---------------------------------------------------------------------------
 // Live readout of each timeframe's bias, how many KPLs (out of up to 4:
@@ -367,7 +390,7 @@ plot(strategy.position_size != 0 ? activeTargetLevel : na, title="Active Target"
 // numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 9, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -380,8 +403,10 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
     table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
-    beStatus = strategy.position_size > 0 ? (breakevenArmedLong ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationLong, format.mintick) + " (reward " + str.tostring(longRewardDistance, format.mintick) + ")") : strategy.position_size < 0 ? (breakevenArmedShort ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationShort, format.mintick) + " (reward " + str.tostring(shortRewardDistance, format.mintick) + ")") : ""
+    beStatus = strategy.position_size > 0 ? (breakevenArmedLong ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationLong, format.mintick)) + (trailingActiveLong ? " [Trail on]" : "  Trail@ " + str.tostring(trailingActivationLong, format.mintick)) : strategy.position_size < 0 ? (breakevenArmedShort ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationShort, format.mintick)) + (trailingActiveShort ? " [Trail on]" : "  Trail@ " + str.tostring(trailingActivationShort, format.mintick)) : ""
     table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick) + beStatus, text_color=color.white, bgcolor=color.new(color.black, 15))
-    table.cell(dbgTable, 0, 7, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
-    table.cell(dbgTable, 1, 7, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 7, "VWAP", text_color=color.white, bgcolor=color.new(color.navy, 60))
+    table.cell(dbgTable, 1, 7, na(vwapLevel) ? "n/a" : str.tostring(vwapLevel, format.mintick) + (close > vwapLevel ? "  (price above)" : "  (price below)"), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 8, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 8, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
