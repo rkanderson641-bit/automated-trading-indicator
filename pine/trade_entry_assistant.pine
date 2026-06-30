@@ -23,7 +23,7 @@ setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group=
 breakevenTriggerPoints  = input.float(10.0, "Breakeven Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
 trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
-vwapDivergencePoints    = input.float(45.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
+vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
