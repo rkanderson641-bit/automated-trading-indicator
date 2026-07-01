@@ -508,6 +508,33 @@ if confirmedLongSetup or confirmedShortSetup or confirmedVwapLong or confirmedVw
 if longCondition or shortCondition or vwapLongCondition or vwapShortCondition or microFibLongCondition or microFibShortCondition
     totalAligned += 1
 
+// Per-trigger breakdown -- diagnostic only, not used in trading logic.
+// Splits totalConfirmed/totalAligned by which of the three independent
+// triggers produced them, so a "why is Bias-aligned stuck at 0" question
+// can be answered by trigger type instead of guessing which one is the
+// culprit (VWAP reversal trades are inherently countertrend, so low
+// alignment there is expected; a KPL reaction trade misaligning with bias
+// as often would point to an actual bug, since Step 1's bias is built from
+// the same kind of SMA/fib reactions Step 3 checks).
+var int confirmedKPL      = 0
+var int alignedKPL        = 0
+var int confirmedVwapRev  = 0
+var int alignedVwapRev    = 0
+var int confirmedMFib     = 0
+var int alignedMFib       = 0
+if confirmedLongSetup or confirmedShortSetup
+    confirmedKPL += 1
+if longCondition or shortCondition
+    alignedKPL += 1
+if confirmedVwapLong or confirmedVwapShort
+    confirmedVwapRev += 1
+if vwapLongCondition or vwapShortCondition
+    alignedVwapRev += 1
+if confirmedMicroFibLong or confirmedMicroFibShort
+    confirmedMFib += 1
+if microFibLongCondition or microFibShortCondition
+    alignedMFib += 1
+
 var float activeStopLevel     = na
 var float activeTargetLevel   = na
 var bool  breakevenArmedLong  = false
@@ -649,7 +676,7 @@ plot(vwapLevel, title="VWAP", color=color.new(color.purple, 20), linewidth=1)
 // numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 10, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 11, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -672,3 +699,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 0, 9, "Micro Fib", text_color=color.white, bgcolor=color.new(color.olive, 60))
     mfStatusText = not enableMicroFibEntry ? "Entry off" : na(mfZoneLow) ? "No leg yet" : (mfIsBullish ? "Bullish" : "Bearish") + " leg  Zone " + str.tostring(mfZoneLow, format.mintick) + "-" + str.tostring(mfZoneHigh, format.mintick) + (mfInZone ? "  [IN ZONE]" : "") + (mfEntryDir == 0 ? "" : "  Watch stage " + str.tostring(mfEntryStage))
     table.cell(dbgTable, 1, 9, mfStatusText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 10, "Funnel by trigger", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 10, "KPL " + str.tostring(confirmedKPL) + "->" + str.tostring(alignedKPL) + "  VWAP " + str.tostring(confirmedVwapRev) + "->" + str.tostring(alignedVwapRev) + "  mFib " + str.tostring(confirmedMFib) + "->" + str.tostring(alignedMFib), text_color=color.white, bgcolor=color.new(color.black, 15))
