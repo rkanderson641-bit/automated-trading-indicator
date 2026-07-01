@@ -25,10 +25,9 @@ breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, gro
 trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
 maxRiskDollars          = input.float(400.0, "Max Risk Per Trade ($)", minval=1.0, step=25, group="Step 4: Breakeven")
 vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
-vwapAlignBufferPoints   = input.float(3.0, "VWAP Alignment Buffer (points)", minval=0.0, step=0.25, group="VWAP Reversal")
-enableMicroFibFilter    = input.bool(false, "Require Micro Fib Pullback Zone (.50-.618)", group="Micro Fib Pullback Filter")
-microFibAtrLen          = input.int(20, "Swing ATR Length", minval=1, group="Micro Fib Pullback Filter")
-microFibThresholdMult   = input.float(4.0, "Minimum Swing Reversal (x ATR)", minval=0.1, step=0.1, group="Micro Fib Pullback Filter")
+enableMicroFibEntry     = input.bool(false, "Enable Micro Fib Pullback Entry", group="Micro Fib Pullback")
+microFibAtrLen          = input.int(20, "Swing ATR Length", minval=1, group="Micro Fib Pullback")
+microFibThresholdMult   = input.float(4.0, "Minimum Swing Reversal (x ATR)", minval=0.1, step=0.1, group="Micro Fib Pullback")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -114,14 +113,19 @@ vwapDenominator += volume
 vwapLevel = vwapDenominator != 0 ? vwapNumerator / vwapDenominator : na
 
 // ---------------------------------------------------------------------------
-// Micro Fib Pullback filter (continuation confluence, chart's own timeframe).
+// Micro Fib Pullback leg tracker (continuation confluence, chart's own
+// timeframe). Feeds an INDEPENDENT entry trigger (see the watch below,
+// mirroring the VWAP divergence reversal watch's shape) -- this is NOT a
+// filter on KPL entries. Per explicit correction: VWAP and micro-fib
+// confluence should each be able to activate a trade on their own (given
+// HTF bias agreement), not act as required AND-gates stacked on top of the
+// KPL/doji/action-candle sequence -- stacking independent conditions that
+// way had driven trade count to zero.
 //
 // Same ZigZag pivot logic as pine/micro_fib_pullback.pine, ported inline
 // rather than read via input.source() (consistent with the rest of this
 // repo's "no external indicator dependency" rule). Unlike that standalone
-// indicator, only the SINGLE most recently confirmed leg is tracked here --
-// this filter only cares about "is price currently pulled back into the
-// current trend leg's .50-.618 zone," not the full multi-leg display.
+// indicator, only the SINGLE most recently confirmed leg is tracked here.
 //
 // A pivot confirms once price reverses from the running candidate extreme
 // by at least microFibThresholdMult x ATR(microFibAtrLen). On each new
@@ -132,12 +136,6 @@ vwapLevel = vwapDenominator != 0 ? vwapNumerator / vwapDenominator : na
 // regardless of leg direction (bullish legs retrace down from the high,
 // bearish legs retrace up from the low, so which of .50/.618 is numerically
 // higher flips with direction).
-//
-// This is a FILTER only (see Step 4), gated by enableMicroFibFilter and
-// defaulted OFF -- it can only remove already-confirmed KPL entries, never
-// add new ones, same shape as the VWAP alignment buffer. Starts disabled so
-// it doesn't disturb the current best-known backtest config until it's
-// explicitly A/B tested.
 // ---------------------------------------------------------------------------
 mfAtrVal    = ta.atr(microFibAtrLen)
 mfThreshold = mfAtrVal * microFibThresholdMult
@@ -396,6 +394,51 @@ if inTradingWindow and vwapExtendedShort
     label.new(bar_index, high, text="VWAP Ext↓", style=label.style_circle, color=color.new(color.purple, 50), size=size.tiny)
 
 // ---------------------------------------------------------------------------
+// Micro fib pullback continuation watch: an INDEPENDENT entry trigger,
+// same shape as the VWAP reversal watch above -- not gated on Step 3's KPL
+// reaction sequence at all. Whenever price is inside the current leg's
+// .50-.618 zone (mfInZone), the model watches for the same doji -> action
+// candle sequence, but in the leg's OWN direction (mfIsBullish -> long
+// continuation, bearish leg -> short continuation) rather than a reversal.
+// A fresh in-zone read at any stage restarts the watch, same "most recent
+// test wins" logic as the other two watches. Gated by enableMicroFibEntry
+// (default off) and the same time-of-day window as everything else.
+// ---------------------------------------------------------------------------
+var int mfEntryDir      = 0
+var int mfEntryStage    = 0
+var int mfEntryStartBar = na
+
+confirmedMicroFibLong  = false
+confirmedMicroFibShort = false
+mfEntryDojiConfirmed   = false
+
+if not inTradingWindow
+    mfEntryDir   := 0
+    mfEntryStage := 0
+else if enableMicroFibEntry and mfInZone
+    mfEntryDir      := mfIsBullish ? 1 : -1
+    mfEntryStage    := 1
+    mfEntryStartBar := bar_index
+else if mfEntryDir != 0 and bar_index - mfEntryStartBar > setupExpiryBars
+    mfEntryDir   := 0
+    mfEntryStage := 0
+else if mfEntryDir != 0 and mfEntryStage == 1 and isDoji
+    mfEntryStage        := 2
+    mfEntryDojiConfirmed := true
+else if mfEntryDir != 0 and mfEntryStage == 2
+    if mfEntryDir == 1 and bullAction
+        confirmedMicroFibLong := true
+        mfEntryDir   := 0
+        mfEntryStage := 0
+    else if mfEntryDir == -1 and bearAction
+        confirmedMicroFibShort := true
+        mfEntryDir   := 0
+        mfEntryStage := 0
+
+if inTradingWindow and enableMicroFibEntry and mfInZone
+    label.new(bar_index, mfIsBullish ? low : high, text="mFib Pullback", style=label.style_circle, color=color.new(color.olive, 50), size=size.tiny)
+
+// ---------------------------------------------------------------------------
 // Step 4: entry/risk/target -- the step that finally places real trades.
 //
 // Entry requires BOTH Step 3's confirmed setup AND Step 1's overall HTF
@@ -437,32 +480,22 @@ nearestBelow(array<float> arr, float refPrice) =>
 
 kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618, vwapLevel)
 
-// VWAP directional filter: requires price to clear VWAP by at least
-// vwapAlignBufferPoints (not just barely cross it) at entry -- a confluence
-// filter on the EXISTING KPL entries, not a separate trigger. Unlike the
-// reversal watch (which added new trades that consistently lost), this can
-// only REMOVE KPL setups that fire against or right at the intraday
-// volume-weighted trend, never add trades. The buffer cuts out marginal
-// whipsaw cases where price is technically on the right side of VWAP but
-// only by a tick or two. If vwapLevel is na (no volume data yet), the
-// filter is skipped rather than blocking every entry.
-vwapAlignedLong  = na(vwapLevel) or close > vwapLevel + vwapAlignBufferPoints
-vwapAlignedShort = na(vwapLevel) or close < vwapLevel - vwapAlignBufferPoints
-
-// Micro fib pullback filter: requires price to currently sit in the tracked
-// leg's .50-.618 retracement zone AND that leg's direction to match the
-// trade direction (a bullish leg backs a long continuation, a bearish leg
-// backs a short). Disabled (pass-through) when enableMicroFibFilter is off
-// or no leg has confirmed yet, same na-skip convention as the VWAP filter.
-microFibAlignedLong  = not enableMicroFibFilter or na(mfZoneLow) or (mfIsBullish and mfInZone)
-microFibAlignedShort = not enableMicroFibFilter or na(mfZoneLow) or (not mfIsBullish and mfInZone)
-
-longCondition  = confirmedLongSetup and overallBias > 0 and vwapAlignedLong and microFibAlignedLong
-shortCondition = confirmedShortSetup and overallBias < 0 and vwapAlignedShort and microFibAlignedShort
+// KPL entry conditions: Step 3's reaction/doji/action-candle sequence plus
+// HTF bias agreement only -- VWAP and micro-fib are NOT required here. Each
+// is its own independent trigger below (per explicit correction: stacking
+// them as required AND-gates on top of this drove trade count to zero).
+longCondition  = confirmedLongSetup and overallBias > 0
+shortCondition = confirmedShortSetup and overallBias < 0
 
 // VWAP reversal conditions: same bias gate, target locked to VWAP at entry
 vwapLongCondition  = confirmedVwapLong  and overallBias > 0
 vwapShortCondition = confirmedVwapShort and overallBias < 0
+
+// Micro fib pullback conditions: same bias gate, target is the nearest KPL
+// beyond entry (a continuation trade in the leg's own direction, same
+// target logic as the plain KPL entries above).
+microFibLongCondition  = confirmedMicroFibLong  and overallBias > 0
+microFibShortCondition = confirmedMicroFibShort and overallBias < 0
 
 // Cumulative funnel counters -- not used for any trading logic, purely so
 // a "why are there zero/few trades" question can be answered by reading
@@ -470,9 +503,9 @@ vwapShortCondition = confirmedVwapShort and overallBias < 0
 var int totalConfirmed = 0
 var int totalAligned   = 0
 var int totalEntered   = 0
-if confirmedLongSetup or confirmedShortSetup or confirmedVwapLong or confirmedVwapShort
+if confirmedLongSetup or confirmedShortSetup or confirmedVwapLong or confirmedVwapShort or confirmedMicroFibLong or confirmedMicroFibShort
     totalConfirmed += 1
-if longCondition or shortCondition or vwapLongCondition or vwapShortCondition
+if longCondition or shortCondition or vwapLongCondition or vwapShortCondition or microFibLongCondition or microFibShortCondition
     totalAligned += 1
 
 var float activeStopLevel     = na
@@ -517,6 +550,20 @@ if vwapShortCondition and strategy.position_size == 0
     activeTargetLevel := vwapLevel
     totalEntered += 1
     label.new(bar_index, high, text="VWAP REV SHORT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
+
+if microFibLongCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := nearestAbove(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, low, text="MFIB LONG", style=label.style_label_up, color=color.new(color.olive, 0), textcolor=color.white, size=size.normal)
+
+if microFibShortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := nearestBelow(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, high, text="MFIB SHORT", style=label.style_label_down, color=color.new(color.olive, 0), textcolor=color.white, size=size.normal)
 
 // Max dollar risk cap: tightens (never loosens) the stop so the position's
 // own low/high never risks more than maxRiskDollars, using the instrument's
@@ -623,4 +670,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 0, 8, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 8, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 9, "Micro Fib", text_color=color.white, bgcolor=color.new(color.olive, 60))
-    table.cell(dbgTable, 1, 9, not enableMicroFibFilter ? "Filter off" : na(mfZoneLow) ? "No leg yet" : (mfIsBullish ? "Bullish" : "Bearish") + " leg  Zone " + str.tostring(mfZoneLow, format.mintick) + "-" + str.tostring(mfZoneHigh, format.mintick) + (mfInZone ? "  [IN ZONE]" : ""), text_color=color.white, bgcolor=color.new(color.black, 15))
+    mfStatusText = not enableMicroFibEntry ? "Entry off" : na(mfZoneLow) ? "No leg yet" : (mfIsBullish ? "Bullish" : "Bearish") + " leg  Zone " + str.tostring(mfZoneLow, format.mintick) + "-" + str.tostring(mfZoneHigh, format.mintick) + (mfInZone ? "  [IN ZONE]" : "") + (mfEntryDir == 0 ? "" : "  Watch stage " + str.tostring(mfEntryStage))
+    table.cell(dbgTable, 1, 9, mfStatusText, text_color=color.white, bgcolor=color.new(color.black, 15))
