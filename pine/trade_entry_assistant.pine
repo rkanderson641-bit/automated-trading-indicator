@@ -150,7 +150,7 @@ var float  mfCandidate    = na
 
 var float mfLvl50     = na
 var float mfLvl618    = na
-var bool  mfIsBullish = na
+var bool  mfIsBullish = false
 
 if na(mfPivotVal)
     mfPivotVal  := close
