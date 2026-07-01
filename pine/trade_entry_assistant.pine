@@ -26,6 +26,9 @@ trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points f
 maxRiskDollars          = input.float(400.0, "Max Risk Per Trade ($)", minval=1.0, step=25, group="Step 4: Breakeven")
 vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
 vwapAlignBufferPoints   = input.float(3.0, "VWAP Alignment Buffer (points)", minval=0.0, step=0.25, group="VWAP Reversal")
+enableMicroFibFilter    = input.bool(false, "Require Micro Fib Pullback Zone (.50-.618)", group="Micro Fib Pullback Filter")
+microFibAtrLen          = input.int(20, "Swing ATR Length", minval=1, group="Micro Fib Pullback Filter")
+microFibThresholdMult   = input.float(4.0, "Minimum Swing Reversal (x ATR)", minval=0.1, step=0.1, group="Micro Fib Pullback Filter")
 showDebug        = input.bool(true, "Show debug table", group="Debug")
 
 // ---------------------------------------------------------------------------
@@ -109,6 +112,82 @@ typicalPrice = (high + low + close) / 3
 vwapNumerator   += typicalPrice * volume
 vwapDenominator += volume
 vwapLevel = vwapDenominator != 0 ? vwapNumerator / vwapDenominator : na
+
+// ---------------------------------------------------------------------------
+// Micro Fib Pullback filter (continuation confluence, chart's own timeframe).
+//
+// Same ZigZag pivot logic as pine/micro_fib_pullback.pine, ported inline
+// rather than read via input.source() (consistent with the rest of this
+// repo's "no external indicator dependency" rule). Unlike that standalone
+// indicator, only the SINGLE most recently confirmed leg is tracked here --
+// this filter only cares about "is price currently pulled back into the
+// current trend leg's .50-.618 zone," not the full multi-leg display.
+//
+// A pivot confirms once price reverses from the running candidate extreme
+// by at least microFibThresholdMult x ATR(microFibAtrLen). On each new
+// confirmed pivot, the leg from the PRIOR pivot to the new one becomes the
+// tracked leg: mfIsBullish = true if that leg moved up (continuation
+// direction is long), false if it moved down (continuation direction is
+// short). mfZoneLow/mfZoneHigh bound the .50-.618 retracement band
+// regardless of leg direction (bullish legs retrace down from the high,
+// bearish legs retrace up from the low, so which of .50/.618 is numerically
+// higher flips with direction).
+//
+// This is a FILTER only (see Step 4), gated by enableMicroFibFilter and
+// defaulted OFF -- it can only remove already-confirmed KPL entries, never
+// add new ones, same shape as the VWAP alignment buffer. Starts disabled so
+// it doesn't disturb the current best-known backtest config until it's
+// explicitly A/B tested.
+// ---------------------------------------------------------------------------
+mfAtrVal    = ta.atr(microFibAtrLen)
+mfThreshold = mfAtrVal * microFibThresholdMult
+
+var string mfDir         = "up"
+var float  mfPivotVal     = na
+var int    mfPivotBar     = na
+var float  mfPrevPivotVal = na
+var float  mfCandidate    = na
+
+var float mfLvl50     = na
+var float mfLvl618    = na
+var bool  mfIsBullish = na
+
+if na(mfPivotVal)
+    mfPivotVal  := close
+    mfPivotBar  := bar_index
+    mfCandidate := close
+else if mfDir == "up"
+    if na(mfCandidate) or high > mfCandidate
+        mfCandidate := high
+    if mfCandidate - low >= mfThreshold
+        mfPrevPivotVal := mfPivotVal
+        mfPivotVal     := mfCandidate
+        mfPivotBar     := bar_index
+        mfDir          := "down"
+        mfCandidate    := low
+
+        mfMove   = mfPivotVal - mfPrevPivotVal
+        mfLvl50  := mfPivotVal - 0.5   * mfMove
+        mfLvl618 := mfPivotVal - 0.618 * mfMove
+        mfIsBullish := mfMove > 0
+else
+    if na(mfCandidate) or low < mfCandidate
+        mfCandidate := low
+    if high - mfCandidate >= mfThreshold
+        mfPrevPivotVal := mfPivotVal
+        mfPivotVal     := mfCandidate
+        mfPivotBar     := bar_index
+        mfDir          := "up"
+        mfCandidate    := high
+
+        mfMove   = mfPivotVal - mfPrevPivotVal
+        mfLvl50  := mfPivotVal - 0.5   * mfMove
+        mfLvl618 := mfPivotVal - 0.618 * mfMove
+        mfIsBullish := mfMove > 0
+
+mfZoneLow  = na(mfLvl50) ? na : math.min(mfLvl50, mfLvl618)
+mfZoneHigh = na(mfLvl50) ? na : math.max(mfLvl50, mfLvl618)
+mfInZone   = not na(mfZoneLow) and close >= mfZoneLow and close <= mfZoneHigh
 
 // ---------------------------------------------------------------------------
 // Step 2: time-of-day gate (indices schedule -- this chart is Nasdaq-100
@@ -350,8 +429,16 @@ kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4
 vwapAlignedLong  = na(vwapLevel) or close > vwapLevel + vwapAlignBufferPoints
 vwapAlignedShort = na(vwapLevel) or close < vwapLevel - vwapAlignBufferPoints
 
-longCondition  = confirmedLongSetup and overallBias > 0 and vwapAlignedLong
-shortCondition = confirmedShortSetup and overallBias < 0 and vwapAlignedShort
+// Micro fib pullback filter: requires price to currently sit in the tracked
+// leg's .50-.618 retracement zone AND that leg's direction to match the
+// trade direction (a bullish leg backs a long continuation, a bearish leg
+// backs a short). Disabled (pass-through) when enableMicroFibFilter is off
+// or no leg has confirmed yet, same na-skip convention as the VWAP filter.
+microFibAlignedLong  = not enableMicroFibFilter or na(mfZoneLow) or (mfIsBullish and mfInZone)
+microFibAlignedShort = not enableMicroFibFilter or na(mfZoneLow) or (not mfIsBullish and mfInZone)
+
+longCondition  = confirmedLongSetup and overallBias > 0 and vwapAlignedLong and microFibAlignedLong
+shortCondition = confirmedShortSetup and overallBias < 0 and vwapAlignedShort and microFibAlignedShort
 
 // VWAP reversal conditions: same bias gate, target locked to VWAP at entry
 vwapLongCondition  = confirmedVwapLong  and overallBias > 0
@@ -495,7 +582,7 @@ plot(vwapLevel, title="VWAP", color=color.new(color.purple, 20), linewidth=1)
 // numbers instead of just trusted.
 // ---------------------------------------------------------------------------
 if showDebug and barstate.islast
-    var table dbgTable = table.new(position.bottom_right, 2, 9, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    var table dbgTable = table.new(position.bottom_right, 2, 10, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
     table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
     table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
@@ -515,3 +602,5 @@ if showDebug and barstate.islast
     table.cell(dbgTable, 1, 7, na(vwapLevel) ? "n/a" : str.tostring(vwapLevel, format.mintick) + (close > vwapLevel ? "  (price above)" : "  (price below)"), text_color=color.white, bgcolor=color.new(color.black, 15))
     table.cell(dbgTable, 0, 8, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
     table.cell(dbgTable, 1, 8, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 9, "Micro Fib", text_color=color.white, bgcolor=color.new(color.olive, 60))
+    table.cell(dbgTable, 1, 9, not enableMicroFibFilter ? "Filter off" : na(mfZoneLow) ? "No leg yet" : (mfIsBullish ? "Bullish" : "Bearish") + " leg  Zone " + str.tostring(mfZoneLow, format.mintick) + "-" + str.tostring(mfZoneHigh, format.mintick) + (mfInZone ? "  [IN ZONE]" : ""), text_color=color.white, bgcolor=color.new(color.black, 15))
