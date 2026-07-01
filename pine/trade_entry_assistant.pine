@@ -189,6 +189,26 @@ mfZoneLow  = na(mfLvl50) ? na : math.min(mfLvl50, mfLvl618)
 mfZoneHigh = na(mfLvl50) ? na : math.max(mfLvl50, mfLvl618)
 mfInZone   = not na(mfZoneLow) and close >= mfZoneLow and close <= mfZoneHigh
 
+// On-chart markers (gated by showDebug, same as the standalone
+// pine/micro_fib_pullback.pine indicator's own debug toggle): a PIVOT
+// label at each confirmed swing point, plus the current leg's .50/.618
+// zone drawn as two dashed lines extending right. The lines are redrawn
+// (old ones deleted) only when a NEW pivot confirms, not every bar, so a
+// live pullback into the zone can be watched forming in real time exactly
+// like the standalone indicator's own legs.
+var line mfLn50            = na
+var line mfLn618           = na
+var int  mfLastDrawnPivotBar = na
+
+if showDebug and not na(mfLvl50) and mfPivotBar != mfLastDrawnPivotBar
+    mfLastDrawnPivotBar := mfPivotBar
+    line.delete(mfLn50)
+    line.delete(mfLn618)
+    mfLegColor = mfIsBullish ? color.green : color.red
+    mfLn50  := line.new(mfPivotBar, mfLvl50, mfPivotBar + 1, mfLvl50, extend=extend.right, color=color.new(mfLegColor, 40), width=1, style=line.style_dashed)
+    mfLn618 := line.new(mfPivotBar, mfLvl618, mfPivotBar + 1, mfLvl618, extend=extend.right, color=color.new(mfLegColor, 40), width=1, style=line.style_dashed)
+    label.new(mfPivotBar, mfPivotVal, text="mFib PIVOT", style=mfIsBullish ? label.style_label_down : label.style_label_up, color=color.new(color.olive, 50), textcolor=color.white, size=size.tiny)
+
 // ---------------------------------------------------------------------------
 // Step 2: time-of-day gate (indices schedule -- this chart is Nasdaq-100
 // futures; the source video gives gold a different schedule, which isn't
