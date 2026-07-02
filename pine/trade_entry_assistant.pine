@@ -1,0 +1,703 @@
+//@version=6
+strategy("Trade Entry Assistant", overlay=true, max_labels_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=25000, margin_long=5, margin_short=5)
+
+// margin_long/margin_short are set explicitly because Pine defaults to
+// requiring 100% of notional value as margin when unset -- for 1 MNQ
+// contract ($2/point, ~$58-60k notional at current prices) that default
+// would silently reject every entry against any reasonably-sized
+// initial_capital, with no error: the script's own counters still believe
+// strategy.entry() succeeded, only the broker-emulator layer underneath
+// rejects the fill. 5% approximates real futures margin (a small fraction
+// of notional, which is the whole point of trading futures), not the
+// unrealistic default.
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+fibLookback      = input.int(100, "Fib Swing Lookback (bars, per timeframe)", minval=2, group="Step 1: HTF Bias")
+morningSession   = input.session("0900-1020", "Morning Trend Window", group="Step 2: Time-of-Day Gate")
+lunchSession     = input.session("1100-1200", "Lunch Lull (avoid)", group="Step 2: Time-of-Day Gate")
+afternoonSession = input.session("1200-1300", "Afternoon Window", group="Step 2: Time-of-Day Gate")
+dojiBodyRatio    = input.float(0.1, "Doji Max Body (x candle range)", minval=0.01, maxval=1.0, step=0.01, group="Step 3: LTF Reaction")
+setupExpiryBars  = input.int(20, "Pending Setup Expiry (bars)", minval=1, group="Step 3: LTF Reaction")
+breakevenTriggerPoints  = input.float(10.0, "Breakeven Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
+breakevenBufferTicks    = input.int(2, "Breakeven Buffer (ticks)", minval=0, group="Step 4: Breakeven")
+trailingActivationPoints = input.float(15.0, "Trailing Stop Activation (points from entry)", minval=0.01, step=0.25, group="Step 4: Breakeven")
+maxRiskDollars          = input.float(400.0, "Max Risk Per Trade ($)", minval=1.0, step=25, group="Step 4: Breakeven")
+vwapDivergencePoints    = input.float(60.0, "VWAP Reversal Trigger (points from VWAP)", minval=1.0, step=0.25, group="VWAP Reversal")
+enableMicroFibEntry     = input.bool(false, "Enable Micro Fib Pullback Entry", group="Micro Fib Pullback")
+microFibAtrLen          = input.int(20, "Swing ATR Length", minval=1, group="Micro Fib Pullback")
+microFibThresholdMult   = input.float(4.0, "Minimum Swing Reversal (x ATR)", minval=0.1, step=0.1, group="Micro Fib Pullback")
+showDebug        = input.bool(true, "Show debug table", group="Debug")
+
+// ---------------------------------------------------------------------------
+// Step 1: HTF bias from KPL confluence (Daily -> 4H -> 1H).
+//
+// A KPL "reacts" when a candle's wick crosses it but the CLOSE holds on
+// one side -- a bullish reaction is low <= KPL with close > KPL (tested
+// from above and held), a bearish reaction is high >= KPL with close <
+// KPL (tested from below and rejected). This matches "bias comes from how
+// price reacts at these levels, not the levels alone" from the source
+// video, and the same wick-vs-close discipline already used elsewhere in
+// this repo.
+//
+// Crucially, that reaction has to be evaluated using THAT TIMEFRAME's own
+// candle -- a Daily reaction means a full Daily candle wicked into the
+// Daily SMA and closed back off it, not a chart-timeframe candle poking
+// into a Daily level. So the wick-vs-close check itself runs inside each
+// request.security() call (where high/low/close resolve to that
+// timeframe's own OHLC), not locally against a requested SMA value.
+//
+// KPLs are SMA-50/200 (key_price_levels.pine already computes exactly
+// these per timeframe) PLUS the 50%/61.8% retracement of each timeframe's
+// own dominant swing -- "the exact KPLs can be our SMA's or our
+// Fibonacci... two exact KPLs in the same area gives us double confluence"
+// per the source video. The video draws that swing by eye; here it's
+// approximated as the highest-high/lowest-low over `fibLookback` bars of
+// that timeframe, with direction (and so which end the retracement is
+// measured from) decided by whichever extreme printed more recently --
+// ta.highestbars()/ta.lowestbars() return how many bars back each extreme
+// is, so the one closer to 0 happened last.
+// ---------------------------------------------------------------------------
+kplReactions(int len) =>
+    sma50  = ta.sma(close, 50)
+    sma200 = ta.sma(close, 200)
+    bull50  = low <= sma50 and close > sma50
+    bear50  = high >= sma50 and close < sma50
+    bull200 = low <= sma200 and close > sma200
+    bear200 = high >= sma200 and close < sma200
+
+    swingHigh = ta.highest(high, len)
+    swingLow  = ta.lowest(low, len)
+    swingUp   = ta.highestbars(high, len) > ta.lowestbars(low, len)
+    fib50     = swingUp ? swingHigh - (swingHigh - swingLow) * 0.5   : swingLow + (swingHigh - swingLow) * 0.5
+    fib618    = swingUp ? swingHigh - (swingHigh - swingLow) * 0.618 : swingLow + (swingHigh - swingLow) * 0.618
+    bullFib50  = low <= fib50 and close > fib50
+    bearFib50  = high >= fib50 and close < fib50
+    bullFib618 = low <= fib618 and close > fib618
+    bearFib618 = high >= fib618 and close < fib618
+
+    bullHits = (bull50 ? 1 : 0) + (bull200 ? 1 : 0) + (bullFib50 ? 1 : 0) + (bullFib618 ? 1 : 0)
+    bearHits = (bear50 ? 1 : 0) + (bear200 ? 1 : 0) + (bearFib50 ? 1 : 0) + (bearFib618 ? 1 : 0)
+    [bullHits, bearHits, sma50, sma200, fib50, fib618]
+
+htfBias(simple string tf, int len) =>
+    [bullHits, bearHits, sma50, sma200, fib50, fib618] = request.security(syminfo.tickerid, tf, kplReactions(len), lookahead=barmerge.lookahead_off)
+    bias = bullHits > bearHits ? 1 : bearHits > bullHits ? -1 : 0
+    [bias, sma50, sma200, fib50, fib618, bullHits, bearHits]
+
+[biasD,  smaD50,  smaD200,  fibD50,  fibD618,  bullHitsD,  bearHitsD]  = htfBias("D",   fibLookback)
+[bias4H, sma4H50, sma4H200, fib4H50, fib4H618, bullHits4H, bearHits4H] = htfBias("240", fibLookback)
+[bias1H, sma1H50, sma1H200, fib1H50, fib1H618, bullHits1H, bearHits1H] = htfBias("60",  fibLookback)
+
+overallBias = biasD + bias4H + bias1H
+
+biasText(b) => b > 0 ? "Bullish" : b < 0 ? "Bearish" : "Neutral"
+
+// ---------------------------------------------------------------------------
+// VWAP (5-min chart, native calculation)
+// Anchored to the current session (resets each trading day). Same
+// wick-vs-close reaction discipline as the 12 KPL levels: bullish reaction
+// = wick touches VWAP from above, close holds above it; bearish = wick
+// touches from below, close holds below it.
+// ---------------------------------------------------------------------------
+var float vwapNumerator   = 0.0
+var float vwapDenominator = 0.0
+isNewSession = ta.change(time("D")) != 0
+if isNewSession
+    vwapNumerator   := 0.0
+    vwapDenominator := 0.0
+typicalPrice = (high + low + close) / 3
+vwapNumerator   += typicalPrice * volume
+vwapDenominator += volume
+vwapLevel = vwapDenominator != 0 ? vwapNumerator / vwapDenominator : na
+
+// ---------------------------------------------------------------------------
+// Micro Fib Pullback leg tracker (continuation confluence, chart's own
+// timeframe). Feeds an INDEPENDENT entry trigger (see the watch below,
+// mirroring the VWAP divergence reversal watch's shape) -- this is NOT a
+// filter on KPL entries. Per explicit correction: VWAP and micro-fib
+// confluence should each be able to activate a trade on their own (given
+// HTF bias agreement), not act as required AND-gates stacked on top of the
+// KPL/doji/action-candle sequence -- stacking independent conditions that
+// way had driven trade count to zero.
+//
+// Same ZigZag pivot logic as pine/micro_fib_pullback.pine, ported inline
+// rather than read via input.source() (consistent with the rest of this
+// repo's "no external indicator dependency" rule). Unlike that standalone
+// indicator, only the SINGLE most recently confirmed leg is tracked here.
+//
+// A pivot confirms once price reverses from the running candidate extreme
+// by at least microFibThresholdMult x ATR(microFibAtrLen). On each new
+// confirmed pivot, the leg from the PRIOR pivot to the new one becomes the
+// tracked leg: mfIsBullish = true if that leg moved up (continuation
+// direction is long), false if it moved down (continuation direction is
+// short). mfZoneLow/mfZoneHigh bound the .50-.618 retracement band
+// regardless of leg direction (bullish legs retrace down from the high,
+// bearish legs retrace up from the low, so which of .50/.618 is numerically
+// higher flips with direction).
+// ---------------------------------------------------------------------------
+mfAtrVal    = ta.atr(microFibAtrLen)
+mfThreshold = mfAtrVal * microFibThresholdMult
+
+var string mfDir         = "up"
+var float  mfPivotVal     = na
+var int    mfPivotBar     = na
+var float  mfPrevPivotVal = na
+var float  mfCandidate    = na
+
+var float mfLvl50     = na
+var float mfLvl618    = na
+var bool  mfIsBullish = false
+
+if na(mfPivotVal)
+    mfPivotVal  := close
+    mfPivotBar  := bar_index
+    mfCandidate := close
+else if mfDir == "up"
+    if na(mfCandidate) or high > mfCandidate
+        mfCandidate := high
+    if mfCandidate - low >= mfThreshold
+        mfPrevPivotVal := mfPivotVal
+        mfPivotVal     := mfCandidate
+        mfPivotBar     := bar_index
+        mfDir          := "down"
+        mfCandidate    := low
+
+        mfMove   = mfPivotVal - mfPrevPivotVal
+        mfLvl50  := mfPivotVal - 0.5   * mfMove
+        mfLvl618 := mfPivotVal - 0.618 * mfMove
+        mfIsBullish := mfMove > 0
+else
+    if na(mfCandidate) or low < mfCandidate
+        mfCandidate := low
+    if high - mfCandidate >= mfThreshold
+        mfPrevPivotVal := mfPivotVal
+        mfPivotVal     := mfCandidate
+        mfPivotBar     := bar_index
+        mfDir          := "up"
+        mfCandidate    := high
+
+        mfMove   = mfPivotVal - mfPrevPivotVal
+        mfLvl50  := mfPivotVal - 0.5   * mfMove
+        mfLvl618 := mfPivotVal - 0.618 * mfMove
+        mfIsBullish := mfMove > 0
+
+mfZoneLow  = na(mfLvl50) ? na : math.min(mfLvl50, mfLvl618)
+mfZoneHigh = na(mfLvl50) ? na : math.max(mfLvl50, mfLvl618)
+mfInZone   = not na(mfZoneLow) and close >= mfZoneLow and close <= mfZoneHigh
+
+// On-chart markers (gated by showDebug, same as the standalone
+// pine/micro_fib_pullback.pine indicator's own debug toggle): a PIVOT
+// label at each confirmed swing point, plus the current leg's .50/.618
+// zone drawn as two dashed lines extending right. The lines are redrawn
+// (old ones deleted) only when a NEW pivot confirms, not every bar, so a
+// live pullback into the zone can be watched forming in real time exactly
+// like the standalone indicator's own legs.
+var line mfLn50            = na
+var line mfLn618           = na
+var int  mfLastDrawnPivotBar = na
+
+if showDebug and not na(mfLvl50) and mfPivotBar != mfLastDrawnPivotBar
+    mfLastDrawnPivotBar := mfPivotBar
+    line.delete(mfLn50)
+    line.delete(mfLn618)
+    mfLegColor = mfIsBullish ? color.green : color.red
+    mfLn50  := line.new(mfPivotBar, mfLvl50, mfPivotBar + 1, mfLvl50, extend=extend.right, color=color.new(mfLegColor, 40), width=1, style=line.style_dashed)
+    mfLn618 := line.new(mfPivotBar, mfLvl618, mfPivotBar + 1, mfLvl618, extend=extend.right, color=color.new(mfLegColor, 40), width=1, style=line.style_dashed)
+    label.new(mfPivotBar, mfPivotVal, text="mFib PIVOT", style=mfIsBullish ? label.style_label_down : label.style_label_up, color=color.new(color.olive, 50), textcolor=color.white, size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// Step 2: time-of-day gate (indices schedule -- this chart is Nasdaq-100
+// futures; the source video gives gold a different schedule, which isn't
+// covered here since nothing on this chart needs it). A HARD filter, not a
+// soft confluence: per the video, true trend tends to form 10:00-11:00 ET
+// (after the 9:45 ORB) and can run to ~11:20 before the model says stop
+// looking; 11:20-13:00 ET is "lunch lull," avoid entirely; 13:00-14:00 ET is
+// the next trend/reversal window. The video gave its boundaries as
+// approximate ("~11:15-11:20"), so they're inputs here rather than numbers
+// silently pinned to one guess.
+//
+// Step 3 enforces this as a hard reset, not a pause: outside a trading
+// window its whole detection sequence is suppressed, and any watch already
+// in progress when the window closes is cancelled rather than frozen to
+// resume later, since each window is its own fresh opportunity. Step 1
+// still computes regardless of the gate -- bias itself isn't time-gated,
+// only whether Step 3 acts on it.
+// ---------------------------------------------------------------------------
+inMorningWindow   = not na(time(timeframe.period, morningSession, "America/Chicago"))
+inLunchLull       = not na(time(timeframe.period, lunchSession, "America/Chicago"))
+inAfternoonWindow = not na(time(timeframe.period, afternoonSession, "America/Chicago"))
+inTradingWindow   = inMorningWindow or inAfternoonWindow
+
+gateText = inMorningWindow ? "Morning window" : inLunchLull ? "Lunch lull (avoid)" : inAfternoonWindow ? "Afternoon window" : "Outside model windows"
+
+// ---------------------------------------------------------------------------
+// Step 3: LTF reaction (whatever timeframe the chart itself is on -- the
+// video uses 5-min, but that's the user's chart setting, not something to
+// hardcode here).
+//
+// "Wait to participate" -- only act on a reaction AT a KPL, never mid-range.
+// Reuses the exact same wick-vs-close reaction discipline as Step 1, just
+// evaluated against the chart's own candle directly (no request.security()
+// needed -- these KPL price levels were already fetched in Step 1; Step 3
+// only checks the CURRENT bar's own high/low/close against them) and OR'd
+// across all 12 KPLs (SMA50/200 + Fib50/618, x3 timeframes).
+//
+// Per the video: a reaction is followed by a doji (indecision), then an
+// action candle (a Heikin-Ashi candle with NO wick on the trailing side) in
+// the confirming direction -- that action candle is the actual go-ahead.
+// "No wick" is taken literally here (haLow == haOpen for a bullish action
+// candle, haHigh == haOpen for bearish), not a near-zero tolerance -- this
+// is an exact equality, not a fragile float comparison, since haLow/haHigh
+// are themselves computed as math.min/max(..., haOpen, ...), so they
+// literally equal haOpen whenever low/high don't extend past it.
+//
+// The video's OTHER LTF trigger -- a micro trend-line break -- is
+// deliberately NOT implemented: trend lines are being marked by hand,
+// separate from this script, not auto-detected here.
+//
+// Modeled as a 3-stage watch (reaction -> doji -> action candle), since the
+// video describes them as a sequence ("a reaction candle, THEN... a doji...
+// followed by an action candle"), not all on one bar. A fresh reaction at
+// any stage restarts the watch with the new direction (a more recent test
+// is more relevant than a stale one); an unconfirmed watch expires after
+// `setupExpiryBars` bars rather than waiting forever.
+// ---------------------------------------------------------------------------
+bullReact(float level) => low <= level and close > level
+bearReact(float level) => high >= level and close < level
+
+// VWAP intentionally excluded from ltfBullHits/ltfBearHits: it's dynamic
+// intraday and too noisy as a KPL reaction trigger. It contributes only
+// via the separate VWAP divergence reversal watch below.
+ltfBullHits = (bullReact(smaD50) ? 1 : 0) + (bullReact(smaD200) ? 1 : 0) + (bullReact(fibD50) ? 1 : 0) + (bullReact(fibD618) ? 1 : 0) +
+              (bullReact(sma4H50) ? 1 : 0) + (bullReact(sma4H200) ? 1 : 0) + (bullReact(fib4H50) ? 1 : 0) + (bullReact(fib4H618) ? 1 : 0) +
+              (bullReact(sma1H50) ? 1 : 0) + (bullReact(sma1H200) ? 1 : 0) + (bullReact(fib1H50) ? 1 : 0) + (bullReact(fib1H618) ? 1 : 0)
+
+ltfBearHits = (bearReact(smaD50) ? 1 : 0) + (bearReact(smaD200) ? 1 : 0) + (bearReact(fibD50) ? 1 : 0) + (bearReact(fibD618) ? 1 : 0) +
+              (bearReact(sma4H50) ? 1 : 0) + (bearReact(sma4H200) ? 1 : 0) + (bearReact(fib4H50) ? 1 : 0) + (bearReact(fib4H618) ? 1 : 0) +
+              (bearReact(sma1H50) ? 1 : 0) + (bearReact(sma1H200) ? 1 : 0) + (bearReact(fib1H50) ? 1 : 0) + (bearReact(fib1H618) ? 1 : 0)
+
+isDoji     = math.abs(close - open) <= dojiBodyRatio * (high - low)
+
+haClose = (open + high + low + close) / 4
+var float haOpen = na
+haOpen := na(haOpen[1]) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
+haHigh  = math.max(high, math.max(haOpen, haClose))
+haLow   = math.min(low, math.min(haOpen, haClose))
+
+bullAction = haClose > haOpen and haLow == haOpen
+bearAction = haClose < haOpen and haHigh == haOpen
+
+var int pendingDir      = 0
+var int pendingStage    = 0
+var int pendingStartBar = na
+
+confirmedLongSetup  = false
+confirmedShortSetup = false
+dojiJustConfirmed   = false
+
+// Step 2's gate takes priority over every other branch below: outside a
+// trading window, Step 3 is fully suppressed, not just paused. A watch
+// already in progress when the window closes is reset, not frozen to
+// resume later -- per the video, each window is its own fresh opportunity,
+// not a continuation of whatever was forming before lunch.
+if not inTradingWindow
+    pendingDir   := 0
+    pendingStage := 0
+else if ltfBullHits > 0 or ltfBearHits > 0
+    pendingDir      := ltfBullHits > 0 ? 1 : -1
+    pendingStage    := 1
+    pendingStartBar := bar_index
+else if pendingDir != 0 and bar_index - pendingStartBar > setupExpiryBars
+    pendingDir   := 0
+    pendingStage := 0
+else if pendingDir != 0 and pendingStage == 1 and isDoji
+    pendingStage      := 2
+    dojiJustConfirmed := true
+else if pendingDir != 0 and pendingStage == 2
+    if pendingDir == 1 and bullAction
+        confirmedLongSetup := true
+        pendingDir   := 0
+        pendingStage := 0
+    else if pendingDir == -1 and bearAction
+        confirmedShortSetup := true
+        pendingDir   := 0
+        pendingStage := 0
+
+if inTradingWindow and ltfBullHits > 0
+    label.new(bar_index, low, text="KPL React+", style=label.style_circle, color=color.new(color.green, 40), size=size.tiny)
+if inTradingWindow and ltfBearHits > 0
+    label.new(bar_index, high, text="KPL React-", style=label.style_circle, color=color.new(color.red, 40), size=size.tiny)
+if inTradingWindow and dojiJustConfirmed
+    label.new(bar_index, pendingDir == 1 ? low : high, text="DOJI", style=label.style_circle, color=color.new(color.yellow, 30), size=size.tiny)
+if inTradingWindow and confirmedLongSetup
+    label.new(bar_index, low, text="LTF LONG SETUP", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+if inTradingWindow and confirmedShortSetup
+    label.new(bar_index, high, text="LTF SHORT SETUP", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
+// VWAP divergence reversal watch: parallel to the KPL reaction sequence.
+// When price extends vwapDivergencePoints beyond VWAP, the model watches for
+// the same doji -> action candle sequence, but the implied trade direction is
+// BACK toward VWAP (mean-reversion), and the target at entry time is VWAP
+// itself rather than the nearest KPL. Reuses isDoji/bullAction/bearAction
+// from Step 3. Same time-of-day gate and HTF bias requirements apply.
+// ---------------------------------------------------------------------------
+// Persistence filter: extension must hold for 2 consecutive closes, not
+// just a single spike bar, before the reversal watch arms -- a one-bar
+// poke beyond the threshold that immediately snaps back isn't a genuine
+// "severely divergenced" condition.
+vwapExtendedLongRaw  = not na(vwapLevel) and close < vwapLevel - vwapDivergencePoints
+vwapExtendedShortRaw = not na(vwapLevel) and close > vwapLevel + vwapDivergencePoints
+vwapExtendedLong  = vwapExtendedLongRaw  and vwapExtendedLongRaw[1]
+vwapExtendedShort = vwapExtendedShortRaw and vwapExtendedShortRaw[1]
+
+var int   vwapRevDir      = 0
+var int   vwapRevStage    = 0
+var int   vwapRevStartBar = na
+
+confirmedVwapLong  = false
+confirmedVwapShort = false
+vwapRevDojiConfirmed = false
+
+if not inTradingWindow
+    vwapRevDir   := 0
+    vwapRevStage := 0
+else if vwapExtendedLong
+    vwapRevDir      := 1
+    vwapRevStage    := 1
+    vwapRevStartBar := bar_index
+else if vwapExtendedShort
+    vwapRevDir      := -1
+    vwapRevStage    := 1
+    vwapRevStartBar := bar_index
+else if vwapRevDir != 0 and bar_index - vwapRevStartBar > setupExpiryBars
+    vwapRevDir   := 0
+    vwapRevStage := 0
+else if vwapRevDir != 0 and vwapRevStage == 1 and isDoji
+    vwapRevStage        := 2
+    vwapRevDojiConfirmed := true
+else if vwapRevDir != 0 and vwapRevStage == 2
+    if vwapRevDir == 1 and bullAction
+        confirmedVwapLong := true
+        vwapRevDir   := 0
+        vwapRevStage := 0
+    else if vwapRevDir == -1 and bearAction
+        confirmedVwapShort := true
+        vwapRevDir   := 0
+        vwapRevStage := 0
+
+if inTradingWindow and vwapExtendedLong
+    label.new(bar_index, low, text="VWAP Ext↑", style=label.style_circle, color=color.new(color.purple, 50), size=size.tiny)
+if inTradingWindow and vwapExtendedShort
+    label.new(bar_index, high, text="VWAP Ext↓", style=label.style_circle, color=color.new(color.purple, 50), size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// Micro fib pullback continuation watch: an INDEPENDENT entry trigger,
+// same shape as the VWAP reversal watch above -- not gated on Step 3's KPL
+// reaction sequence at all. Whenever price is inside the current leg's
+// .50-.618 zone (mfInZone), the model watches for the same doji -> action
+// candle sequence, but in the leg's OWN direction (mfIsBullish -> long
+// continuation, bearish leg -> short continuation) rather than a reversal.
+// A fresh in-zone read at any stage restarts the watch, same "most recent
+// test wins" logic as the other two watches. Gated by enableMicroFibEntry
+// (default off) and the same time-of-day window as everything else.
+// ---------------------------------------------------------------------------
+var int mfEntryDir      = 0
+var int mfEntryStage    = 0
+var int mfEntryStartBar = na
+
+confirmedMicroFibLong  = false
+confirmedMicroFibShort = false
+mfEntryDojiConfirmed   = false
+
+if not inTradingWindow
+    mfEntryDir   := 0
+    mfEntryStage := 0
+else if enableMicroFibEntry and mfInZone
+    mfEntryDir      := mfIsBullish ? 1 : -1
+    mfEntryStage    := 1
+    mfEntryStartBar := bar_index
+else if mfEntryDir != 0 and bar_index - mfEntryStartBar > setupExpiryBars
+    mfEntryDir   := 0
+    mfEntryStage := 0
+else if mfEntryDir != 0 and mfEntryStage == 1 and isDoji
+    mfEntryStage        := 2
+    mfEntryDojiConfirmed := true
+else if mfEntryDir != 0 and mfEntryStage == 2
+    if mfEntryDir == 1 and bullAction
+        confirmedMicroFibLong := true
+        mfEntryDir   := 0
+        mfEntryStage := 0
+    else if mfEntryDir == -1 and bearAction
+        confirmedMicroFibShort := true
+        mfEntryDir   := 0
+        mfEntryStage := 0
+
+if inTradingWindow and enableMicroFibEntry and mfInZone
+    label.new(bar_index, mfIsBullish ? low : high, text="mFib Pullback", style=label.style_circle, color=color.new(color.olive, 50), size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// Step 4: entry/risk/target -- the step that finally places real trades.
+//
+// Entry requires BOTH Step 3's confirmed setup AND Step 1's overall HTF
+// bias agreeing with the trade direction -- "bias comes first" is the
+// whole premise of Step 1, so a confirmed LTF setup against the HTF bias is
+// skipped, not taken. strategy.entry() fills at the next bar's open by
+// Pine's default order model, which is also the realistic, non-repainting
+// way to do this -- no same-bar-close fill is forced.
+//
+// Initial stop ("risk candle") is just the confirming action candle's own
+// low (long) / high (short) -- the same bar Step 3 confirms on. It only
+// ever trails tighter afterward, to each NEW action candle's low/high in
+// the trade's direction (reusing bullAction/bearAction from Step 3),
+// never loosens.
+//
+// Target is the nearest of Step 1's 12 already-computed KPL levels beyond
+// entry in the trade direction ("the next KPL zone out" / "magnet level"),
+// fixed at entry rather than re-evaluated every bar.
+//
+// One trade at a time: a fresh signal while already in a position is
+// ignored (strategy.position_size == 0 guards every entry), not reversed
+// or stacked, so the existing bracket plays out untouched.
+// ---------------------------------------------------------------------------
+nearestAbove(array<float> arr, float refPrice) =>
+    float nearest = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v > refPrice and (na(nearest) or v < nearest)
+            nearest := v
+    nearest
+
+nearestBelow(array<float> arr, float refPrice) =>
+    float nearest = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v < refPrice and (na(nearest) or v > nearest)
+            nearest := v
+    nearest
+
+kplLevels = array.from(smaD50, smaD200, fibD50, fibD618, sma4H50, sma4H200, fib4H50, fib4H618, sma1H50, sma1H200, fib1H50, fib1H618, vwapLevel)
+
+// KPL entry conditions: Step 3's reaction/doji/action-candle sequence plus
+// HTF bias agreement only -- VWAP and micro-fib are NOT required here. Each
+// is its own independent trigger below (per explicit correction: stacking
+// them as required AND-gates on top of this drove trade count to zero).
+longCondition  = confirmedLongSetup and overallBias > 0
+shortCondition = confirmedShortSetup and overallBias < 0
+
+// VWAP reversal conditions: same bias gate, target locked to VWAP at entry
+vwapLongCondition  = confirmedVwapLong  and overallBias > 0
+vwapShortCondition = confirmedVwapShort and overallBias < 0
+
+// Micro fib pullback conditions: same bias gate, target is the nearest KPL
+// beyond entry (a continuation trade in the leg's own direction, same
+// target logic as the plain KPL entries above).
+microFibLongCondition  = confirmedMicroFibLong  and overallBias > 0
+microFibShortCondition = confirmedMicroFibShort and overallBias < 0
+
+// Cumulative funnel counters -- not used for any trading logic, purely so
+// a "why are there zero/few trades" question can be answered by reading
+// numbers instead of scrolling months of chart history by eye.
+var int totalConfirmed = 0
+var int totalAligned   = 0
+var int totalEntered   = 0
+if confirmedLongSetup or confirmedShortSetup or confirmedVwapLong or confirmedVwapShort or confirmedMicroFibLong or confirmedMicroFibShort
+    totalConfirmed += 1
+if longCondition or shortCondition or vwapLongCondition or vwapShortCondition or microFibLongCondition or microFibShortCondition
+    totalAligned += 1
+
+// Per-trigger breakdown -- diagnostic only, not used in trading logic.
+// Splits totalConfirmed/totalAligned by which of the three independent
+// triggers produced them, so a "why is Bias-aligned stuck at 0" question
+// can be answered by trigger type instead of guessing which one is the
+// culprit (VWAP reversal trades are inherently countertrend, so low
+// alignment there is expected; a KPL reaction trade misaligning with bias
+// as often would point to an actual bug, since Step 1's bias is built from
+// the same kind of SMA/fib reactions Step 3 checks).
+var int confirmedKPL      = 0
+var int alignedKPL        = 0
+var int confirmedVwapRev  = 0
+var int alignedVwapRev    = 0
+var int confirmedMFib     = 0
+var int alignedMFib       = 0
+if confirmedLongSetup or confirmedShortSetup
+    confirmedKPL += 1
+if longCondition or shortCondition
+    alignedKPL += 1
+if confirmedVwapLong or confirmedVwapShort
+    confirmedVwapRev += 1
+if vwapLongCondition or vwapShortCondition
+    alignedVwapRev += 1
+if confirmedMicroFibLong or confirmedMicroFibShort
+    confirmedMFib += 1
+if microFibLongCondition or microFibShortCondition
+    alignedMFib += 1
+
+var float activeStopLevel     = na
+var float activeTargetLevel   = na
+var bool  breakevenArmedLong  = false
+var bool  breakevenArmedShort = false
+var bool  trailingActiveLong  = false
+var bool  trailingActiveShort = false
+
+if strategy.position_size == 0
+    activeStopLevel      := na
+    activeTargetLevel    := na
+    breakevenArmedLong   := false
+    breakevenArmedShort  := false
+    trailingActiveLong   := false
+    trailingActiveShort  := false
+
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := nearestAbove(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, low, text="LONG ENTRY", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
+
+if shortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := nearestBelow(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, high, text="SHORT ENTRY", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+
+if vwapLongCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := vwapLevel
+    totalEntered += 1
+    label.new(bar_index, low, text="VWAP REV LONG", style=label.style_label_up, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
+
+if vwapShortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := vwapLevel
+    totalEntered += 1
+    label.new(bar_index, high, text="VWAP REV SHORT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.normal)
+
+if microFibLongCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    activeStopLevel   := low
+    activeTargetLevel := nearestAbove(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, low, text="MFIB LONG", style=label.style_label_up, color=color.new(color.olive, 0), textcolor=color.white, size=size.normal)
+
+if microFibShortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    activeStopLevel   := high
+    activeTargetLevel := nearestBelow(kplLevels, close)
+    totalEntered += 1
+    label.new(bar_index, high, text="MFIB SHORT", style=label.style_label_down, color=color.new(color.olive, 0), textcolor=color.white, size=size.normal)
+
+// Max dollar risk cap: tightens (never loosens) the stop so the position's
+// own low/high never risks more than maxRiskDollars, using the instrument's
+// actual point value (syminfo.pointvalue) rather than an assumed number --
+// this works correctly across different symbols/contract sizes. Combines
+// with breakeven/trailing below via the same math.max/min pattern, so all
+// three stop adjustments only ever tighten, never loosen, whichever is
+// already in place.
+if strategy.position_size > 0
+    maxRiskPointsLong = maxRiskDollars / (syminfo.pointvalue * math.abs(strategy.position_size))
+    activeStopLevel := math.max(activeStopLevel, strategy.position_avg_price - maxRiskPointsLong)
+if strategy.position_size < 0
+    maxRiskPointsShort = maxRiskDollars / (syminfo.pointvalue * math.abs(strategy.position_size))
+    activeStopLevel := math.min(activeStopLevel, strategy.position_avg_price + maxRiskPointsShort)
+
+trailingActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + trailingActivationPoints : na
+trailingActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - trailingActivationPoints : na
+
+if strategy.position_size > 0 and not trailingActiveLong and close > trailingActivationLong
+    trailingActiveLong := true
+if strategy.position_size < 0 and not trailingActiveShort and close < trailingActivationShort
+    trailingActiveShort := true
+
+if strategy.position_size > 0 and trailingActiveLong and bullAction and low > activeStopLevel
+    activeStopLevel := low
+if strategy.position_size < 0 and trailingActiveShort and bearAction and high < activeStopLevel
+    activeStopLevel := high
+
+// Breakeven safety net: protects against giving back a strong initial move
+// if the trend reverses. Arms once a candle CLOSES beyond breakevenTriggerPct
+// (default 20%) of the distance from entry to target -- a candle body
+// close, not just a wick touch, per explicit choice -- after which the stop
+// is floored at breakeven plus a small tick buffer (also an explicit
+// choice, rather than a dead-even scratch) for the rest of the trade.
+// Combined with the action-candle trailing stop above via math.max (long) /
+// math.min (short), so breakeven only ever pushes the stop toward a BETTER
+// level, never loosens whichever is already in place. Armed once per
+// trade, never un-armed until flat (reset above). If activeTargetLevel is
+// na (the no-KPL-beyond-entry edge case from Step 4's target logic), the
+// reward distance is na and breakeven simply never arms for that trade --
+// a safe, intentional fallback, not an oversight.
+breakevenBuffer = breakevenBufferTicks * syminfo.mintick
+breakevenJustArmedLong  = false
+breakevenJustArmedShort = false
+
+breakevenActivationLong  = strategy.position_size > 0 ? strategy.position_avg_price + breakevenTriggerPoints : na
+breakevenActivationShort = strategy.position_size < 0 ? strategy.position_avg_price - breakevenTriggerPoints : na
+
+if strategy.position_size > 0 and not breakevenArmedLong and close > breakevenActivationLong
+    breakevenArmedLong     := true
+    breakevenJustArmedLong := true
+
+if strategy.position_size < 0 and not breakevenArmedShort and close < breakevenActivationShort
+    breakevenArmedShort     := true
+    breakevenJustArmedShort := true
+
+if strategy.position_size > 0 and breakevenArmedLong
+    activeStopLevel := math.max(activeStopLevel, strategy.position_avg_price + breakevenBuffer)
+if strategy.position_size < 0 and breakevenArmedShort
+    activeStopLevel := math.min(activeStopLevel, strategy.position_avg_price - breakevenBuffer)
+
+if breakevenJustArmedLong
+    label.new(bar_index, low, text="BE ARMED", style=label.style_circle, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
+if breakevenJustArmedShort
+    label.new(bar_index, high, text="BE ARMED", style=label.style_circle, color=color.new(color.blue, 30), textcolor=color.white, size=size.tiny)
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=activeStopLevel, limit=activeTargetLevel)
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop=activeStopLevel, limit=activeTargetLevel)
+
+plot(strategy.position_size != 0 ? activeStopLevel : na, title="Active Stop", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 ? activeTargetLevel : na, title="Active Target", color=color.green, style=plot.style_linebr, linewidth=2)
+plot(vwapLevel, title="VWAP", color=color.new(color.purple, 20), linewidth=1)
+
+// ---------------------------------------------------------------------------
+// Live readout of each timeframe's bias, how many KPLs (out of up to 4:
+// SMA50, SMA200, Fib50, Fib618) reacted in each direction, the fib levels
+// themselves, the current time-of-day gate state, the Step 3 pending
+// watch, and the Step 4 position/stop/target -- so the reaction logic, the
+// auto-detected swing, the gate windows, the LTF sequence, and the live
+// trade management can all be checked against real price action and real
+// numbers instead of just trusted.
+// ---------------------------------------------------------------------------
+if showDebug and barstate.islast
+    var table dbgTable = table.new(position.bottom_right, 2, 11, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.gray)
+    table.cell(dbgTable, 0, 0, "Daily", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 0, biasText(biasD) + " (bull " + str.tostring(bullHitsD) + " / bear " + str.tostring(bearHitsD) + ")\nFib50 " + str.tostring(fibD50, format.mintick) + "  Fib618 " + str.tostring(fibD618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 1, "4H", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 1, biasText(bias4H) + " (bull " + str.tostring(bullHits4H) + " / bear " + str.tostring(bearHits4H) + ")\nFib50 " + str.tostring(fib4H50, format.mintick) + "  Fib618 " + str.tostring(fib4H618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 2, "1H", text_color=color.white, bgcolor=color.new(color.blue, 60))
+    table.cell(dbgTable, 1, 2, biasText(bias1H) + " (bull " + str.tostring(bullHits1H) + " / bear " + str.tostring(bearHits1H) + ")\nFib50 " + str.tostring(fib1H50, format.mintick) + "  Fib618 " + str.tostring(fib1H618, format.mintick), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 3, "Overall", text_color=color.white, bgcolor=color.new(color.purple, 60))
+    table.cell(dbgTable, 1, 3, biasText(overallBias) + "  (" + str.tostring(overallBias) + ")", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 4, "Gate", text_color=color.white, bgcolor=color.new(color.orange, 60))
+    table.cell(dbgTable, 1, 4, gateText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 5, "Step 3", text_color=color.white, bgcolor=color.new(color.teal, 60))
+    table.cell(dbgTable, 1, 5, not inTradingWindow ? "Gated off (outside trading window)" : pendingDir == 0 ? "Idle" : (pendingDir == 1 ? "Bullish" : "Bearish") + " pending, stage " + str.tostring(pendingStage) + " (" + str.tostring(bar_index - pendingStartBar) + " bars)", text_color=color.white, bgcolor=color.new(color.black, 15))
+    beStatus = strategy.position_size > 0 ? (breakevenArmedLong ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationLong, format.mintick)) + (trailingActiveLong ? " [Trail on]" : "  Trail@ " + str.tostring(trailingActivationLong, format.mintick)) : strategy.position_size < 0 ? (breakevenArmedShort ? " [BE armed]" : "\nBE@ " + str.tostring(breakevenActivationShort, format.mintick)) + (trailingActiveShort ? " [Trail on]" : "  Trail@ " + str.tostring(trailingActivationShort, format.mintick)) : ""
+    table.cell(dbgTable, 0, 6, "Step 4", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 6, strategy.position_size == 0 ? "Flat" : (strategy.position_size > 0 ? "Long" : "Short") + "  Stop " + str.tostring(activeStopLevel, format.mintick) + "  Target " + str.tostring(activeTargetLevel, format.mintick) + beStatus, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 7, "VWAP", text_color=color.white, bgcolor=color.new(color.navy, 60))
+    table.cell(dbgTable, 1, 7, na(vwapLevel) ? "n/a" : str.tostring(vwapLevel, format.mintick) + (close > vwapLevel ? "  (price above)" : "  (price below)"), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 8, "Funnel (all-time)", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 8, "Confirmed " + str.tostring(totalConfirmed) + "  ->  Bias-aligned " + str.tostring(totalAligned) + "  ->  Entered " + str.tostring(totalEntered), text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 9, "Micro Fib", text_color=color.white, bgcolor=color.new(color.olive, 60))
+    mfStatusText = not enableMicroFibEntry ? "Entry off" : na(mfZoneLow) ? "No leg yet" : (mfIsBullish ? "Bullish" : "Bearish") + " leg  Zone " + str.tostring(mfZoneLow, format.mintick) + "-" + str.tostring(mfZoneHigh, format.mintick) + (mfInZone ? "  [IN ZONE]" : "") + (mfEntryDir == 0 ? "" : "  Watch stage " + str.tostring(mfEntryStage))
+    table.cell(dbgTable, 1, 9, mfStatusText, text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(dbgTable, 0, 10, "Funnel by trigger", text_color=color.white, bgcolor=color.new(color.maroon, 60))
+    table.cell(dbgTable, 1, 10, "KPL " + str.tostring(confirmedKPL) + "->" + str.tostring(alignedKPL) + "  VWAP " + str.tostring(confirmedVwapRev) + "->" + str.tostring(alignedVwapRev) + "  mFib " + str.tostring(confirmedMFib) + "->" + str.tostring(alignedMFib), text_color=color.white, bgcolor=color.new(color.black, 15))

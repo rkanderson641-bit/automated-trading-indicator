@@ -1,0 +1,47 @@
+//@version=6
+indicator("Order Volume (OV)", overlay=false)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+granularity = input.string("1S", "Granularity", options=["1S", "5S", "15S", "30S", "1", "5"], group="Order Volume")
+
+showBuy   = input.bool(true, "Show Buy Volume", group="Style")
+buyColor  = input.color(color.green, "Buy Volume Color", group="Style")
+showSell  = input.bool(true, "Show Sell Volume", group="Style")
+sellColor = input.color(color.red, "Sell Volume Color", group="Style")
+showDiff  = input.bool(true, "Show Difference", group="Style")
+diffColor = input.color(color.blue, "Difference Color", group="Style")
+
+// ---------------------------------------------------------------------------
+// Estimates buy vs. sell volume by sampling sub-bars at `granularity` within
+// each chart bar -- no actual bid/ask tick data is available from plain
+// OHLCV, so this uses the standard proxy: each sub-bar that closes ABOVE its
+// own open counts its volume as "buy", below counts as "sell" (a doji
+// sub-bar, close == open, counts toward neither). Buy/Sell are summed
+// separately across all sub-bars within the current chart bar; Sell is
+// plotted negated so it extends below zero, mirroring Buy above it. The
+// Difference (Buy - Sell) is the net per-bar order-flow estimate.
+// ---------------------------------------------------------------------------
+[lowerOpen, lowerClose, lowerVolume] = request.security_lower_tf(syminfo.tickerid, granularity, [open, close, volume])
+
+buyVol  = 0.0
+sellVol = 0.0
+
+if array.size(lowerClose) > 0
+    for i = 0 to array.size(lowerClose) - 1
+        subOpen   = array.get(lowerOpen, i)
+        subClose  = array.get(lowerClose, i)
+        subVolume = array.get(lowerVolume, i)
+        if subClose > subOpen
+            buyVol += subVolume
+        else if subClose < subOpen
+            sellVol += subVolume
+
+diffVol = buyVol - sellVol
+
+plot(showBuy ? buyVol : na, "Buy Volume", style=plot.style_columns, color=buyColor)
+plot(showSell ? -sellVol : na, "Sell Volume", style=plot.style_columns, color=sellColor)
+plot(showDiff ? diffVol : na, "Difference", color=diffColor, linewidth=2)
+
+hline(0, "Zero", color=color.new(color.gray, 50))

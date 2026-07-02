@@ -1,0 +1,158 @@
+//@version=6
+indicator("Opening Range Breakout (ORB) Sessions", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+showMain      = input.bool(true, "Show 8:30-9:00 CDT Opening Range", group="8:30-9:00 Main ORB")
+sessionStr    = input.session("0830-0900", "Session", group="8:30-9:00 Main ORB")
+sessionTz     = input.string("America/Chicago", "Timezone", group="8:30-9:00 Main ORB")
+boxColor      = input.color(color.purple, "Box Color", group="8:30-9:00 Main ORB")
+extendBoxes   = input.bool(true, "Extend box through rest of session", group="8:30-9:00 Main ORB")
+showMainMid   = input.bool(true, "Show midpoint line", group="8:30-9:00 Main ORB")
+
+showOvernight   = input.bool(true, "Show 7:30-7:45 CDT Overnight ORB", group="7:30-7:45 Overnight ORB")
+overnightSess   = input.session("0730-0745", "Session", group="7:30-7:45 Overnight ORB")
+overnightTz     = input.string("America/Chicago", "Timezone", group="7:30-7:45 Overnight ORB")
+overnightColor  = input.color(color.white, "Box Color", group="7:30-7:45 Overnight ORB")
+extendOvernight = input.bool(true, "Extend through rest of session", group="7:30-7:45 Overnight ORB")
+showOvernightMid = input.bool(true, "Show midpoint line", group="7:30-7:45 Overnight ORB")
+
+showNyAm      = input.bool(true, "Show 8:30-8:45 CDT NY AM 15min ORB", group="8:30-8:45 NY AM ORB")
+nyAmSess      = input.session("0830-0845", "Session", group="8:30-8:45 NY AM ORB")
+nyAmTz        = input.string("America/Chicago", "Timezone", group="8:30-8:45 NY AM ORB")
+nyAmColor     = input.color(color.yellow, "Line Color", group="8:30-8:45 NY AM ORB")
+extendNyAm    = input.bool(true, "Extend lines through rest of session", group="8:30-8:45 NY AM ORB")
+showNyAmMid   = input.bool(true, "Show midpoint line", group="8:30-8:45 NY AM ORB")
+
+// ---------------------------------------------------------------------------
+// 8:30-9:00 CDT main opening range, drawn as a translucent box so candles
+// remain visible through it, with an opaque dotted midpoint line in the
+// same color as the box.
+// ---------------------------------------------------------------------------
+orbSession   = time(timeframe.period, sessionStr, sessionTz)
+inSession    = not na(orbSession)
+sessionStart = inSession and na(orbSession[1])
+
+var float orbHigh     = na
+var float orbLow      = na
+var int   orbStartBar = na
+var box   orbBox      = na
+var line  orbMidLn    = na
+
+if showMain
+    if sessionStart
+        orbHigh     := high
+        orbLow      := low
+        orbStartBar := bar_index
+        orbBox      := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=boxColor, border_width=1, bgcolor=color.new(boxColor, 90))
+        if showMainMid
+            if not na(orbMidLn)
+                line.delete(orbMidLn)
+            orbMidLn := line.new(bar_index, (high + low) / 2, bar_index, (high + low) / 2, extend=extend.none, color=boxColor, width=1, style=line.style_dotted)
+    else if inSession
+        orbHigh := math.max(orbHigh, high)
+        orbLow  := math.min(orbLow, low)
+        box.set_top(orbBox, orbHigh)
+        box.set_bottom(orbBox, orbLow)
+        box.set_right(orbBox, bar_index)
+        if showMainMid and not na(orbMidLn)
+            mid_ = (orbHigh + orbLow) / 2
+            line.set_xy1(orbMidLn, orbStartBar, mid_)
+            line.set_xy2(orbMidLn, bar_index, mid_)
+    else if extendBoxes and not na(orbBox)
+        box.set_right(orbBox, bar_index)
+        if showMainMid and not na(orbMidLn)
+            line.set_xy2(orbMidLn, bar_index, (orbHigh + orbLow) / 2)
+
+brokeAbove = not na(orbHigh) and close > orbHigh
+brokeBelow = not na(orbLow) and close < orbLow
+
+alertcondition(brokeAbove, title="ORB Disrespected Above", message="Price closed above the opening range high")
+alertcondition(brokeBelow, title="ORB Disrespected Below", message="Price closed below the opening range low")
+
+// ---------------------------------------------------------------------------
+// 7:30-7:45 CDT overnight ORB, drawn the same way as the main ORB box
+// (single translucent box so candles remain visible through it), just in
+// a different default color, with its own opaque dotted midpoint line.
+// ---------------------------------------------------------------------------
+onSession   = time(timeframe.period, overnightSess, overnightTz)
+inOnSession = not na(onSession)
+onStart     = inOnSession and na(onSession[1])
+
+var float onHigh     = na
+var float onLow      = na
+var int   onStartBar = na
+var box   onBox      = na
+var line  onMidLn    = na
+
+if showOvernight
+    if onStart
+        onHigh     := high
+        onLow      := low
+        onStartBar := bar_index
+        onBox      := box.new(left=bar_index, top=high, bottom=low, right=bar_index, border_color=overnightColor, border_width=1, bgcolor=color.new(overnightColor, 90))
+        if showOvernightMid
+            if not na(onMidLn)
+                line.delete(onMidLn)
+            onMidLn := line.new(bar_index, (high + low) / 2, bar_index, (high + low) / 2, extend=extend.none, color=overnightColor, width=1, style=line.style_dotted)
+    else if inOnSession
+        onHigh := math.max(onHigh, high)
+        onLow  := math.min(onLow, low)
+        box.set_top(onBox, onHigh)
+        box.set_bottom(onBox, onLow)
+        box.set_right(onBox, bar_index)
+        if showOvernightMid and not na(onMidLn)
+            onMid_ = (onHigh + onLow) / 2
+            line.set_xy1(onMidLn, onStartBar, onMid_)
+            line.set_xy2(onMidLn, bar_index, onMid_)
+    else if extendOvernight and not na(onBox)
+        box.set_right(onBox, bar_index)
+        if showOvernightMid and not na(onMidLn)
+            line.set_xy2(onMidLn, bar_index, (onHigh + onLow) / 2)
+
+// ---------------------------------------------------------------------------
+// 8:30-8:45 CDT NY AM 15-minute ORB, drawn as opaque high/low lines rather
+// than a box, with its own opaque dotted midpoint line.
+// ---------------------------------------------------------------------------
+nyAmSession   = time(timeframe.period, nyAmSess, nyAmTz)
+inNyAmSession = not na(nyAmSession)
+nyAmStart     = inNyAmSession and na(nyAmSession[1])
+
+var float nyAmHigh     = na
+var float nyAmLow      = na
+var int   nyAmStartBar = na
+var line  nyAmHighLn   = na
+var line  nyAmLowLn    = na
+var line  nyAmMidLn    = na
+
+if showNyAm
+    if nyAmStart
+        if not na(nyAmHighLn)
+            line.delete(nyAmHighLn)
+            line.delete(nyAmLowLn)
+        if not na(nyAmMidLn)
+            line.delete(nyAmMidLn)
+        nyAmHigh     := high
+        nyAmLow      := low
+        nyAmStartBar := bar_index
+        nyAmHighLn   := line.new(bar_index, high, bar_index, high, extend=extend.none, color=nyAmColor, width=2)
+        nyAmLowLn    := line.new(bar_index, low, bar_index, low, extend=extend.none, color=nyAmColor, width=2)
+        if showNyAmMid
+            nyAmMidLn := line.new(bar_index, (high + low) / 2, bar_index, (high + low) / 2, extend=extend.none, color=nyAmColor, width=1, style=line.style_dotted)
+    else if inNyAmSession
+        nyAmHigh := math.max(nyAmHigh, high)
+        nyAmLow  := math.min(nyAmLow, low)
+        line.set_xy1(nyAmHighLn, nyAmStartBar, nyAmHigh)
+        line.set_xy2(nyAmHighLn, bar_index, nyAmHigh)
+        line.set_xy1(nyAmLowLn, nyAmStartBar, nyAmLow)
+        line.set_xy2(nyAmLowLn, bar_index, nyAmLow)
+        if showNyAmMid and not na(nyAmMidLn)
+            nyAmMid_ = (nyAmHigh + nyAmLow) / 2
+            line.set_xy1(nyAmMidLn, nyAmStartBar, nyAmMid_)
+            line.set_xy2(nyAmMidLn, bar_index, nyAmMid_)
+    else if extendNyAm and not na(nyAmHighLn)
+        line.set_xy2(nyAmHighLn, bar_index, nyAmHigh)
+        line.set_xy2(nyAmLowLn, bar_index, nyAmLow)
+        if showNyAmMid and not na(nyAmMidLn)
+            line.set_xy2(nyAmMidLn, bar_index, (nyAmHigh + nyAmLow) / 2)

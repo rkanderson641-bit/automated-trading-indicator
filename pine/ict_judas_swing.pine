@@ -1,0 +1,433 @@
+//@version=6
+strategy("ICT Judas Swing Assistant", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=25000, margin_long=5, margin_short=5)
+
+// margin_long/margin_short are set explicitly because Pine defaults to
+// requiring 100% of notional value as margin when unset -- for leveraged
+// futures (1 MNQ contract is ~$58-60k notional) that default silently
+// rejects every entry against any reasonable initial_capital with no
+// visible error. 5% approximates real futures margin. Same rationale as
+// trade_entry_assistant.pine.
+
+// ---------------------------------------------------------------------------
+// ICT Judas Swing model (source: user-provided summary video, 2026-07-01):
+//   1. Order flow (bias) on the 15m -- HH+HL structure = buy program,
+//      LH+LL = sell program. Fully automatic here, frozen at the moment
+//      the trade window opens each day.
+//   2. Before the open, mark liquidity OPPOSITE the bias: buy program ->
+//      sell-side (session LOWS), sell program -> buy-side (session HIGHS).
+//      v1 tracks the Asian and London session H/L only.
+//   3. After the open, wait for one of those levels to be purged. That
+//      fake move is the Judas Swing.
+//   4. On the chart timeframe (run this script on 1m or 2m), wait for a
+//      market structure shift -- close through the most recent opposing
+//      pivot -- from a displacement leg that leaves a fair value gap.
+//   5. Limit order at the NEAR edge of that FVG (the edge price touches
+//      first on the retrace), stop beyond the Judas extreme plus breathing
+//      room, target a fixed R multiple (the video used 1:2 throughout).
+//
+// All session logic runs in America/New_York internally, so the chart's
+// own timezone setting does not matter. For indices the video says to use
+// the 09:30 open instead of 08:30 -- change "Judas Window" accordingly.
+// ---------------------------------------------------------------------------
+
+const string TZ = "America/New_York"
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+biasTf      = input.timeframe("15", "Order Flow Timeframe", group="Step 1: Order Flow Bias")
+biasPivLen  = input.int(3, "Bias Pivot Strength (bars each side)", minval=1, group="Step 1: Order Flow Bias")
+asiaSess    = input.session("2000-0000", "Asian Session (NY time)", group="Step 2: Liquidity Levels")
+londonSess  = input.session("0200-0500", "London Session (NY time)", group="Step 2: Liquidity Levels")
+tradeSess   = input.session("0930-1200", "Judas Window (NY time)", tooltip="Purge + entry window after the open. Video: indices like NAS100/MNQ use the 09:30 equities open (default here); forex uses 0830-1100. Session logic is computed in New York time internally regardless of the chart's display timezone.", group="Step 3: Purge Window")
+ltfPivLen   = input.int(3, "MSS Pivot Strength (bars each side)", minval=1, group="Step 4: MSS + FVG")
+fvgMaxBars  = input.int(20, "FVG Freshness (max bars old)", minval=1, group="Step 4: MSS + FVG")
+dispAtrMult = input.float(0.0, "Displacement Min Body (x ATR14, 0 = off)", minval=0.0, step=0.1, tooltip="Extra displacement filter on the FVG's middle candle. The FVG itself is already the video's displacement evidence, so this defaults off.", group="Step 4: MSS + FVG")
+slBufTicks  = input.int(4, "Stop Breathing Room (ticks)", minval=0, group="Step 5: Orders")
+rrMult      = input.float(2.0, "Reward : Risk", minval=0.1, step=0.1, group="Step 5: Orders")
+maxStopPts  = input.float(0.0, "Max Stop Distance (price units, 0 = off)", minval=0.0, tooltip="Video: skip the trade if the stop needs more than 15-20 pips (forex). Set in raw price units for the symbol you trade.", group="Step 5: Orders")
+maxRiskUsd  = input.float(400.0, "Max Risk Per Trade ($, 0 = off)", minval=0.0, step=25, tooltip="Skips setups whose 1R stop distance costs more than this in dollars at 1 contract. With fixed position size, uncapped stop width is what lets losers outweigh 2R winners.", group="Step 5: Orders")
+orderExpiry = input.int(45, "Unfilled Order Expiry (bars)", minval=1, group="Step 5: Orders")
+onePerDay   = input.bool(true, "One setup per day", group="Step 5: Orders")
+flattenEod  = input.bool(true, "Flatten at 16:00 NY", group="Step 5: Orders")
+showDebug   = input.bool(true, "Show debug table", group="Debug")
+
+// ---------------------------------------------------------------------------
+// Step 1: 15m order flow, fully automatic.
+//
+// Tracks the last two confirmed pivot highs and lows on the bias timeframe:
+// HH+HL flips state bullish, LH+LL flips it bearish, anything mixed KEEPS
+// the previous state (a ranging 15m rarely prints clean HH+HL and LH+LL on
+// the same pair of pivots, and zeroing out on every mixed reading would
+// stand the strategy down far more often than the video's author does).
+// The var state lives inside the request.security() context so it is
+// maintained on the 15m series itself.
+// ---------------------------------------------------------------------------
+orderFlow() =>
+    ph = ta.pivothigh(high, biasPivLen, biasPivLen)
+    pl = ta.pivotlow(low, biasPivLen, biasPivLen)
+    var float lastPH = na
+    var float prevPH = na
+    var float lastPL = na
+    var float prevPL = na
+    if not na(ph)
+        prevPH := lastPH
+        lastPH := ph
+    if not na(pl)
+        prevPL := lastPL
+        lastPL := pl
+    var int state = 0
+    bool haveAll = not na(prevPH) and not na(prevPL)
+    if haveAll and lastPH > prevPH and lastPL > prevPL
+        state := 1
+    else if haveAll and lastPH < prevPH and lastPL < prevPL
+        state := -1
+    state
+
+bias15 = request.security(syminfo.tickerid, biasTf, orderFlow())
+
+// ---------------------------------------------------------------------------
+// Step 2: Asian + London session ranges (NY time). Both sessions complete
+// before the 08:30 open, and Asia doesn't restart until 20:00, so the
+// stored extremes hold steady as the day's marked liquidity through the
+// whole Judas window.
+// ---------------------------------------------------------------------------
+inAsia   = not na(time(timeframe.period, asiaSess, TZ))
+inLondon = not na(time(timeframe.period, londonSess, TZ))
+inWindow = not na(time(timeframe.period, tradeSess, TZ))
+
+var float asiaHi = na
+var float asiaLo = na
+var float lonHi  = na
+var float lonLo  = na
+
+if inAsia and not inAsia[1]
+    asiaHi := high
+    asiaLo := low
+else if inAsia
+    asiaHi := math.max(asiaHi, high)
+    asiaLo := math.min(asiaLo, low)
+
+if inLondon and not inLondon[1]
+    lonHi := high
+    lonLo := low
+else if inLondon
+    lonHi := math.max(lonHi, high)
+    lonLo := math.min(lonLo, low)
+
+// ---------------------------------------------------------------------------
+// Daily state machine. Bias is frozen at window open (the video reads
+// order flow BEFORE the open, then doesn't re-litigate it mid-session).
+// ---------------------------------------------------------------------------
+windowStart = inWindow and not inWindow[1]
+windowEnd   = (not inWindow) and inWindow[1]
+
+var int   dayBias     = 0
+var bool  purged      = false
+var int   purgeBar    = na
+var float judasLo     = na    // deepest low since the purge (long stops)
+var float judasHi     = na    // highest high since the purge (short stops)
+var bool  mss         = false
+var int   mssBar      = na
+var bool  placedToday = false
+var bool  pendingOrd  = false
+var int   placedBar   = na
+var float lastEntryPx = na
+var float lastStopPx  = na
+var float lastTpPx    = na
+var float lastRiskUsd = na
+
+// Diagnostics: day funnel, exit types, realized R. These exist to locate
+// WHERE the pipeline rejects days / loses money before any tuning is done.
+var int   daysTotal   = 0
+var int   daysBias    = 0
+var int   daysPurge   = 0
+var int   daysMss     = 0
+var int   daysPlaced  = 0
+var int   daysFilled  = 0
+var bool  dayFilled   = false
+var int   tpCount     = 0
+var int   slCount     = 0
+var int   eodCount    = 0
+var int   cancelCount = 0
+var float sumWinR     = 0.0
+var float sumLossR    = 0.0
+var int   winRn       = 0
+var int   lossRn      = 0
+
+if windowStart
+    dayBias     := bias15
+    purged      := false
+    purgeBar    := na
+    judasLo     := na
+    judasHi     := na
+    mss         := false
+    mssBar      := na
+    placedToday := false
+    dayFilled   := false
+
+if windowEnd
+    daysTotal += 1
+    if dayBias != 0
+        daysBias += 1
+    if purged
+        daysPurge += 1
+    if mss
+        daysMss += 1
+    if placedToday
+        daysPlaced += 1
+    if dayFilled
+        daysFilled += 1
+
+longHunt  = dayBias == 1     // buy program: hunt session lows, trade long after the purge
+shortHunt = dayBias == -1    // sell program: hunt session highs, trade short
+
+// ---------------------------------------------------------------------------
+// Step 3: liquidity purge after the open = the Judas Swing itself.
+// ---------------------------------------------------------------------------
+if inWindow and not purged
+    if longHunt and ((not na(asiaLo) and low < asiaLo) or (not na(lonLo) and low < lonLo))
+        purged   := true
+        purgeBar := bar_index
+        label.new(bar_index, na, "Judas purge", yloc=yloc.belowbar, style=label.style_label_up, color=color.new(color.orange, 10), textcolor=color.white, size=size.small)
+    if shortHunt and ((not na(asiaHi) and high > asiaHi) or (not na(lonHi) and high > lonHi))
+        purged   := true
+        purgeBar := bar_index
+        label.new(bar_index, na, "Judas purge", yloc=yloc.abovebar, style=label.style_label_down, color=color.new(color.orange, 10), textcolor=color.white, size=size.small)
+
+// The Judas extreme keeps extending while the fake move runs -- it is only
+// read at order placement time, so a deeper flush before entry widens the
+// stop correctly and a post-entry flush can't move it.
+if purged
+    if longHunt
+        judasLo := na(judasLo) ? low : math.min(judasLo, low)
+    if shortHunt
+        judasHi := na(judasHi) ? high : math.max(judasHi, high)
+
+// ---------------------------------------------------------------------------
+// Step 4: market structure shift on the chart timeframe. During the Judas
+// leg the tracked pivot naturally updates to the leg's own lower-highs /
+// higher-lows, so a close through it is the structure shift.
+// ---------------------------------------------------------------------------
+phL = ta.pivothigh(high, ltfPivLen, ltfPivLen)
+plL = ta.pivotlow(low, ltfPivLen, ltfPivLen)
+var float ltfPH = na
+var float ltfPL = na
+if not na(phL)
+    ltfPH := phL
+if not na(plL)
+    ltfPL := plL
+
+if inWindow and purged and not mss
+    if longHunt and not na(ltfPH) and close > ltfPH
+        mss    := true
+        mssBar := bar_index
+        label.new(bar_index, na, "MSS", yloc=yloc.abovebar, style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.tiny)
+    if shortHunt and not na(ltfPL) and close < ltfPL
+        mss    := true
+        mssBar := bar_index
+        label.new(bar_index, na, "MSS", yloc=yloc.belowbar, style=label.style_label_up, color=color.new(color.blue, 20), textcolor=color.white, size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// FVG tracking. The most recent gap in each direction is remembered so the
+// entry works whether the gap completes just before or just after the MSS
+// close (both happen on real displacement legs). Near edge = the boundary
+// price touches first on the retrace: gap TOP (low of the completing bar)
+// for longs, gap BOTTOM (high of the completing bar) for shorts.
+// ---------------------------------------------------------------------------
+atr14 = ta.atr(14)
+midBody = math.abs(close[1] - open[1])
+
+bullFvg = low > high[2]
+bearFvg = high < low[2]
+
+var int   bullFvgBar    = na
+var float bullFvgEntry  = na
+var float bullFvgFar    = na
+var bool  bullFvgDispOk = false
+if bullFvg
+    bullFvgBar    := bar_index
+    bullFvgEntry  := low
+    bullFvgFar    := high[2]
+    bullFvgDispOk := dispAtrMult == 0 or midBody >= dispAtrMult * atr14
+
+var int   bearFvgBar    = na
+var float bearFvgEntry  = na
+var float bearFvgFar    = na
+var bool  bearFvgDispOk = false
+if bearFvg
+    bearFvgBar    := bar_index
+    bearFvgEntry  := high
+    bearFvgFar    := low[2]
+    bearFvgDispOk := dispAtrMult == 0 or midBody >= dispAtrMult * atr14
+
+// ---------------------------------------------------------------------------
+// Step 5: place the limit order at the FVG near edge.
+// ---------------------------------------------------------------------------
+flatNow = strategy.position_size == 0
+
+canLong = inWindow and longHunt and purged and mss and not placedToday and flatNow and not pendingOrd and not na(bullFvgBar) and bullFvgBar > purgeBar and bar_index - bullFvgBar <= fvgMaxBars and bullFvgDispOk and (na(placedBar) or bullFvgBar > placedBar)
+
+canShort = inWindow and shortHunt and purged and mss and not placedToday and flatNow and not pendingOrd and not na(bearFvgBar) and bearFvgBar > purgeBar and bar_index - bearFvgBar <= fvgMaxBars and bearFvgDispOk and (na(placedBar) or bearFvgBar > placedBar)
+
+if canLong
+    entryPx = bullFvgEntry
+    stopPx  = judasLo - slBufTicks * syminfo.mintick
+    risk    = entryPx - stopPx
+    riskUsd = risk * syminfo.pointvalue
+    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts) and (maxRiskUsd == 0 or riskUsd <= maxRiskUsd)
+        strategy.entry("JudasL", strategy.long, limit=entryPx)
+        strategy.exit("JudasL X", from_entry="JudasL", stop=stopPx, limit=entryPx + rrMult * risk, comment_profit="TP", comment_loss="SL")
+        placedToday := true
+        pendingOrd  := true
+        placedBar   := bar_index
+        lastRiskUsd := riskUsd
+        lastEntryPx := entryPx
+        lastStopPx  := stopPx
+        lastTpPx    := entryPx + rrMult * risk
+        box.new(bullFvgBar - 2, bullFvgEntry, bar_index + 10, bullFvgFar, border_color=color.new(color.teal, 40), bgcolor=color.new(color.teal, 80))
+        line.new(bar_index, lastEntryPx, bar_index + orderExpiry, lastEntryPx, color=color.new(color.blue, 0))
+        line.new(bar_index, lastStopPx, bar_index + orderExpiry, lastStopPx, color=color.new(color.red, 0))
+        line.new(bar_index, lastTpPx, bar_index + orderExpiry, lastTpPx, color=color.new(color.green, 0))
+
+if canShort
+    entryPx = bearFvgEntry
+    stopPx  = judasHi + slBufTicks * syminfo.mintick
+    risk    = stopPx - entryPx
+    riskUsd = risk * syminfo.pointvalue
+    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts) and (maxRiskUsd == 0 or riskUsd <= maxRiskUsd)
+        strategy.entry("JudasS", strategy.short, limit=entryPx)
+        strategy.exit("JudasS X", from_entry="JudasS", stop=stopPx, limit=entryPx - rrMult * risk, comment_profit="TP", comment_loss="SL")
+        placedToday := true
+        pendingOrd  := true
+        placedBar   := bar_index
+        lastRiskUsd := riskUsd
+        lastEntryPx := entryPx
+        lastStopPx  := stopPx
+        lastTpPx    := entryPx - rrMult * risk
+        box.new(bearFvgBar - 2, bearFvgFar, bar_index + 10, bearFvgEntry, border_color=color.new(color.red, 40), bgcolor=color.new(color.red, 80))
+        line.new(bar_index, lastEntryPx, bar_index + orderExpiry, lastEntryPx, color=color.new(color.blue, 0))
+        line.new(bar_index, lastStopPx, bar_index + orderExpiry, lastStopPx, color=color.new(color.red, 0))
+        line.new(bar_index, lastTpPx, bar_index + orderExpiry, lastTpPx, color=color.new(color.green, 0))
+
+// Order lifecycle: mark fills, expire stale unfilled limits, and cancel
+// anything still resting when the window closes.
+justFilled = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justFilled
+    pendingOrd := false
+    dayFilled  := true
+
+if pendingOrd and (bar_index - placedBar >= orderExpiry or windowEnd)
+    strategy.cancel_all()
+    pendingOrd  := false
+    cancelCount += 1
+
+// Tally each freshly closed trade: exit type (TP/SL/anything else = EOD
+// flat) and realized R relative to the risk stored at placement -- this is
+// what verifies the 1:2 target is actually being realized, not just set.
+if strategy.closedtrades > nz(strategy.closedtrades[1])
+    tradeIdx  = strategy.closedtrades - 1
+    exitCmt   = strategy.closedtrades.exit_comment(tradeIdx)
+    tradePnl  = strategy.closedtrades.profit(tradeIdx)
+    if exitCmt == "TP"
+        tpCount += 1
+    else if exitCmt == "SL"
+        slCount += 1
+    else
+        eodCount += 1
+    if not na(lastRiskUsd) and lastRiskUsd > 0
+        realizedR = tradePnl / lastRiskUsd
+        if realizedR >= 0
+            sumWinR += realizedR
+            winRn   += 1
+        else
+            sumLossR += realizedR
+            lossRn   += 1
+
+// Optional re-arm when multiple setups per day are allowed: a canceled
+// order or a closed trade frees the day again (a FRESH FVG is still
+// required via the placedBar guard above).
+tradeJustClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
+if not onePerDay and placedToday and not pendingOrd and strategy.position_size == 0 and (tradeJustClosed or bar_index > placedBar)
+    placedToday := false
+
+// Intraday only: flatten into the NY close.
+nyHHMM = hour(time, TZ) * 100 + minute(time, TZ)
+if flattenEod and nyHHMM >= 1600 and strategy.position_size != 0
+    strategy.close_all(comment="EOD flat")
+
+// ---------------------------------------------------------------------------
+// Visuals: bias call at the open, session liquidity lines across the
+// window (hunted side emphasized), purge/MSS labels above.
+// ---------------------------------------------------------------------------
+var line asiaHiLn = na
+var line asiaLoLn = na
+var line lonHiLn  = na
+var line lonLoLn  = na
+
+if windowStart
+    biasTxt = dayBias == 1 ? "Buy program - hunting Asia/London LOWS" : dayBias == -1 ? "Sell program - hunting Asia/London HIGHS" : "No clear 15m order flow - stand down"
+    biasCol = dayBias == 1 ? color.new(color.teal, 20) : dayBias == -1 ? color.new(color.red, 20) : color.new(color.gray, 20)
+    label.new(bar_index, na, biasTxt, yloc=yloc.abovebar, style=label.style_label_down, color=biasCol, textcolor=color.white, size=size.small)
+
+    colHunted = color.new(color.orange, 0)
+    colIdle   = color.new(color.gray, 60)
+    asiaHiLn := na(asiaHi) ? na : line.new(bar_index, asiaHi, bar_index, asiaHi, color=shortHunt ? colHunted : colIdle, width=shortHunt ? 2 : 1, style=shortHunt ? line.style_solid : line.style_dotted)
+    asiaLoLn := na(asiaLo) ? na : line.new(bar_index, asiaLo, bar_index, asiaLo, color=longHunt ? colHunted : colIdle, width=longHunt ? 2 : 1, style=longHunt ? line.style_solid : line.style_dotted)
+    lonHiLn  := na(lonHi) ? na : line.new(bar_index, lonHi, bar_index, lonHi, color=shortHunt ? colHunted : colIdle, width=shortHunt ? 2 : 1, style=shortHunt ? line.style_solid : line.style_dotted)
+    lonLoLn  := na(lonLo) ? na : line.new(bar_index, lonLo, bar_index, lonLo, color=longHunt ? colHunted : colIdle, width=longHunt ? 2 : 1, style=longHunt ? line.style_solid : line.style_dotted)
+
+if inWindow and not windowStart
+    if not na(asiaHiLn)
+        line.set_x2(asiaHiLn, bar_index)
+    if not na(asiaLoLn)
+        line.set_x2(asiaLoLn, bar_index)
+    if not na(lonHiLn)
+        line.set_x2(lonHiLn, bar_index)
+    if not na(lonLoLn)
+        line.set_x2(lonLoLn, bar_index)
+
+// ---------------------------------------------------------------------------
+// Debug table (evidence-first debugging, per repo convention).
+// ---------------------------------------------------------------------------
+fmt(float v) =>
+    na(v) ? "na" : str.tostring(v, format.mintick)
+
+fmtBar(int b) =>
+    na(b) ? "-" : str.tostring(bar_index - b) + " bars ago"
+
+var table dbg = table.new(position.top_right, 2, 16, bgcolor=color.new(color.black, 20), border_width=1)
+if showDebug and barstate.islast
+    tfWarn = timeframe.in_seconds() > 300 ? "chart TF > 5m: run on 1m/2m!" : timeframe.period + " ok"
+    table.cell(dbg, 0, 0, "Chart TF", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 0, tfWarn, text_color=timeframe.in_seconds() > 300 ? color.orange : color.white, text_size=size.small)
+    table.cell(dbg, 0, 1, "15m flow now", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 1, bias15 == 1 ? "bullish" : bias15 == -1 ? "bearish" : "none yet", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 2, "Day bias (frozen)", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 2, dayBias == 1 ? "buy program" : dayBias == -1 ? "sell program" : "stand down", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 3, "Asia H / L", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 3, fmt(asiaHi) + " / " + fmt(asiaLo), text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 4, "London H / L", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 4, fmt(lonHi) + " / " + fmt(lonLo), text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 5, "In window", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 5, inWindow ? "yes" : "no", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 6, "Purged", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 6, purged ? fmtBar(purgeBar) : "waiting", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 7, "Judas extreme", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 7, longHunt ? fmt(judasLo) : shortHunt ? fmt(judasHi) : "-", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 8, "MSS", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 8, mss ? fmtBar(mssBar) : "waiting", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 9, "LTF pivots H / L", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 9, fmt(ltfPH) + " / " + fmt(ltfPL), text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 10, "Last FVG", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 10, longHunt ? (na(bullFvgBar) ? "none" : "bull " + fmtBar(bullFvgBar) + " @ " + fmt(bullFvgEntry)) : shortHunt ? (na(bearFvgBar) ? "none" : "bear " + fmtBar(bearFvgBar) + " @ " + fmt(bearFvgEntry)) : "-", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 11, "Order", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 11, pendingOrd ? "pending @ " + fmt(lastEntryPx) : strategy.position_size != 0 ? "in trade" : placedToday ? "done for today" : "none", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 12, "Funnel days>bias>purge>MSS>order>fill", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 12, str.tostring(daysTotal) + " > " + str.tostring(daysBias) + " > " + str.tostring(daysPurge) + " > " + str.tostring(daysMss) + " > " + str.tostring(daysPlaced) + " > " + str.tostring(daysFilled), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 13, "Exits TP / SL / EOD", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 13, str.tostring(tpCount) + " / " + str.tostring(slCount) + " / " + str.tostring(eodCount), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 14, "Expired unfilled", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 14, str.tostring(cancelCount), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 15, "Avg realized R win / loss", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 15, (winRn > 0 ? str.tostring(sumWinR / winRn, "#.##") : "-") + " / " + (lossRn > 0 ? str.tostring(sumLossR / lossRn, "#.##") : "-"), text_color=color.yellow, text_size=size.small)

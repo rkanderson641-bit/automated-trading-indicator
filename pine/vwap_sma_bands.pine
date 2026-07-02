@@ -1,0 +1,90 @@
+//@version=6
+indicator("VWAP + SMA Bands", overlay=true)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+showVwap   = input.bool(true, "Show VWAP", group="VWAP")
+vwapSrc    = input.source(hlc3, "Source", group="VWAP")
+vwapColor  = input.color(color.blue, "VWAP Color", group="VWAP")
+
+showBand1  = input.bool(true, "Show Band 1", group="VWAP Bands (Std Dev)")
+mult1      = input.float(1.0, "Multiplier #1", minval=0, step=0.1, group="VWAP Bands (Std Dev)")
+showBand2  = input.bool(false, "Show Band 2", group="VWAP Bands (Std Dev)")
+mult2      = input.float(2.0, "Multiplier #2", minval=0, step=0.1, group="VWAP Bands (Std Dev)")
+showBand3  = input.bool(false, "Show Band 3", group="VWAP Bands (Std Dev)")
+mult3      = input.float(3.0, "Multiplier #3", minval=0, step=0.1, group="VWAP Bands (Std Dev)")
+upperColor = input.color(color.white, "Upper Band Color", group="VWAP Bands (Std Dev)")
+lowerColor = input.color(color.gray, "Lower Band Color", group="VWAP Bands (Std Dev)")
+fillBands  = input.bool(true, "Fill Bands", group="VWAP Bands (Std Dev)")
+
+show50   = input.bool(true, "Show SMA 50", group="SMA 50")
+len50    = input.int(50, "Length", minval=1, group="SMA 50")
+src50    = input.source(close, "Source", group="SMA 50")
+color50  = input.color(color.aqua, "Color", group="SMA 50")
+
+show200  = input.bool(true, "Show SMA 200", group="SMA 200")
+len200   = input.int(200, "Length", minval=1, group="SMA 200")
+src200   = input.source(close, "Source", group="SMA 200")
+color200 = input.color(color.yellow, "Color", group="SMA 200")
+
+// ---------------------------------------------------------------------------
+// Session VWAP with optional standard-deviation bands -- matches the
+// reference free indicator exactly: session-anchored, (H+L+C)/3 source by
+// default, up to 3 independently toggleable +-multiplier bands (only #1
+// on by default), filled between upper/lower. ta.vwap() alone doesn't
+// expose the variance needed for bands, so VWAP and its bands are both
+// computed manually here from the same running sums, reset at the start
+// of each new session (session.isfirstbar, not a calendar-day check --
+// futures sessions don't reset at midnight), using the standard volume-
+// weighted variance identity Var = E[x^2] - E[x]^2.
+// ---------------------------------------------------------------------------
+var float sumPV  = 0.0
+var float sumV   = 0.0
+var float sumPV2 = 0.0
+
+if session.isfirstbar
+    sumPV  := 0.0
+    sumV   := 0.0
+    sumPV2 := 0.0
+
+sumPV  += vwapSrc * volume
+sumV   += volume
+sumPV2 += volume * vwapSrc * vwapSrc
+
+vwapVal  = sumV != 0 ? sumPV / sumV : na
+variance = sumV != 0 ? math.max(sumPV2 / sumV - vwapVal * vwapVal, 0) : na
+stdevVal = na(variance) ? na : math.sqrt(variance)
+
+plot(showVwap ? vwapVal : na, "VWAP", color=vwapColor, linewidth=2)
+
+upper1 = vwapVal + stdevVal * mult1
+lower1 = vwapVal - stdevVal * mult1
+upper2 = vwapVal + stdevVal * mult2
+lower2 = vwapVal - stdevVal * mult2
+upper3 = vwapVal + stdevVal * mult3
+lower3 = vwapVal - stdevVal * mult3
+
+pu1 = plot(showBand1 ? upper1 : na, "Upper Band 1", color=upperColor)
+pl1 = plot(showBand1 ? lower1 : na, "Lower Band 1", color=lowerColor)
+fill(pu1, pl1, color=fillBands ? color.new(vwapColor, 90) : na, title="Band 1 Fill")
+
+pu2 = plot(showBand2 ? upper2 : na, "Upper Band 2", color=upperColor)
+pl2 = plot(showBand2 ? lower2 : na, "Lower Band 2", color=lowerColor)
+fill(pu2, pl2, color=fillBands ? color.new(vwapColor, 92) : na, title="Band 2 Fill")
+
+pu3 = plot(showBand3 ? upper3 : na, "Upper Band 3", color=upperColor)
+pl3 = plot(showBand3 ? lower3 : na, "Lower Band 3", color=lowerColor)
+fill(pu3, pl3, color=fillBands ? color.new(vwapColor, 94) : na, title="Band 3 Fill")
+
+// ---------------------------------------------------------------------------
+// SMA 50 / SMA 200 -- plain single moving-average lines, matching the
+// reference free indicators exactly (no band/envelope of any kind on
+// either one, despite the original "band" naming -- confirmed directly
+// from their settings dialogs: just Length, Source, one plotted line).
+// ---------------------------------------------------------------------------
+sma50  = ta.sma(src50, len50)
+sma200 = ta.sma(src200, len200)
+
+plot(show50 ? sma50 : na, "SMA 50", color=color50, linewidth=2)
+plot(show200 ? sma200 : na, "SMA 200", color=color200, linewidth=2)

@@ -1,0 +1,228 @@
+//@version=6
+indicator("Key Price Levels (KPL)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+showDaily   = input.bool(true, "Show Daily 50/200 SMA", group="Multi-Timeframe SMA")
+showH4      = input.bool(true, "Show 4H 50/200 SMA", group="Multi-Timeframe SMA")
+showH1      = input.bool(true, "Show 1H 50/200 SMA", group="Multi-Timeframe SMA")
+
+colorD50    = input.color(color.new(color.red, 0), "Daily 50 SMA Color", group="Multi-Timeframe SMA")
+colorD200   = input.color(color.new(color.maroon, 0), "Daily 200 SMA Color", group="Multi-Timeframe SMA")
+colorH4_50  = input.color(color.new(color.orange, 0), "4H 50 SMA Color", group="Multi-Timeframe SMA")
+colorH4_200 = input.color(color.new(#b06a00, 0), "4H 200 SMA Color", group="Multi-Timeframe SMA")
+colorH1_50  = input.color(color.new(color.fuchsia, 30), "1H 50 SMA Color", group="Multi-Timeframe SMA")
+colorH1_200 = input.color(color.new(color.fuchsia, 0), "1H 200 SMA Color", group="Multi-Timeframe SMA")
+
+showOvernight   = input.bool(true, "Show Overnight High/Low", group="Overnight Session")
+overnightSess   = input.session("1700-0730", "Overnight Session", group="Overnight Session")
+overnightTz     = input.string("America/Chicago", "Overnight Session Timezone", group="Overnight Session")
+colorONH        = input.color(color.new(color.red, 0), "Overnight High Color", group="Overnight Session")
+colorONL        = input.color(color.new(color.green, 0), "Overnight Low Color", group="Overnight Session")
+
+showPrevDay = input.bool(true, "Show Previous Day High/Low", group="Previous Day")
+colorPDH    = input.color(color.new(color.red, 0), "Prev Day High Color", group="Previous Day")
+colorPDL    = input.color(color.new(color.green, 0), "Prev Day Low Color", group="Previous Day")
+
+showOpen    = input.bool(true, "Show Today's Opening Price", group="Opening Price")
+colorOP     = input.color(color.new(color.aqua, 0), "Opening Price Color", group="Opening Price")
+
+// ---------------------------------------------------------------------------
+// Multi-timeframe SMAs, drawn as a flat reference line + right-edge label
+// at the SMA's current value (not the full historical curve) — moved every
+// bar so it always reflects the most recent value, including the live,
+// still-forming higher-timeframe bar (request.security reflects the
+// realtime value on the current bar by default; lookahead only affects
+// historical/backtest bars). These have no single "origin candle" since
+// they're continuously evolving, so they still span the whole chart.
+// ---------------------------------------------------------------------------
+sma50_d   = request.security(syminfo.tickerid, "D", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_d  = request.security(syminfo.tickerid, "D", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+sma50_h4  = request.security(syminfo.tickerid, "240", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_h4 = request.security(syminfo.tickerid, "240", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+sma50_h1  = request.security(syminfo.tickerid, "60", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+sma200_h1 = request.security(syminfo.tickerid, "60", ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+
+var line  lnD50   = na
+var line  lnD200  = na
+var line  lnH4_50  = na
+var line  lnH4_200 = na
+var line  lnH1_50  = na
+var line  lnH1_200 = na
+
+var label lblD50   = na
+var label lblD200  = na
+var label lblH4_50  = na
+var label lblH4_200 = na
+var label lblH1_50  = na
+var label lblH1_200 = na
+
+updateSpanningLine(line ln, label lbl, bool show, float val, color col, string tag) =>
+    var line  newLn  = na
+    var label newLbl = na
+    if show and not na(val)
+        if na(ln)
+            newLn := line.new(bar_index - 1, val, bar_index, val, extend=extend.both, color=col, width=1)
+            newLbl := label.new(bar_index, val, text=str.tostring(val, format.mintick) + " " + tag, style=label.style_label_left, color=col, textcolor=color.white, size=size.small)
+        else
+            line.set_xy1(ln, bar_index - 1, val)
+            line.set_xy2(ln, bar_index, val)
+            label.set_xy(lbl, bar_index, val)
+            label.set_text(lbl, str.tostring(val, format.mintick) + " " + tag)
+            newLn := ln
+            newLbl := lbl
+    else
+        if not na(ln)
+            line.delete(ln)
+            label.delete(lbl)
+        newLn := na
+        newLbl := na
+    [newLn, newLbl]
+
+[lnD50_, lblD50_]     = updateSpanningLine(lnD50, lblD50, showDaily, sma50_d, colorD50, "D 50")
+lnD50 := lnD50_
+lblD50 := lblD50_
+[lnD200_, lblD200_]   = updateSpanningLine(lnD200, lblD200, showDaily, sma200_d, colorD200, "D 200")
+lnD200 := lnD200_
+lblD200 := lblD200_
+[lnH4_50_, lblH4_50_]   = updateSpanningLine(lnH4_50, lblH4_50, showH4, sma50_h4, colorH4_50, "4H 50")
+lnH4_50 := lnH4_50_
+lblH4_50 := lblH4_50_
+[lnH4_200_, lblH4_200_] = updateSpanningLine(lnH4_200, lblH4_200, showH4, sma200_h4, colorH4_200, "4H 200")
+lnH4_200 := lnH4_200_
+lblH4_200 := lblH4_200_
+[lnH1_50_, lblH1_50_]   = updateSpanningLine(lnH1_50, lblH1_50, showH1, sma50_h1, colorH1_50, "1H 50")
+lnH1_50 := lnH1_50_
+lblH1_50 := lblH1_50_
+[lnH1_200_, lblH1_200_] = updateSpanningLine(lnH1_200, lblH1_200, showH1, sma200_h1, colorH1_200, "1H 200")
+lnH1_200 := lnH1_200_
+lblH1_200 := lblH1_200_
+
+// ---------------------------------------------------------------------------
+// Origin-anchored levels (ONH/ONL/PDH/PDL/OP): each one's line starts at
+// the exact bar where that value was set, extending only to the right from
+// there, instead of spanning the whole chart. The line is only recreated
+// (re-anchored) when the underlying value actually changes; otherwise its
+// right edge is simply extended to the current bar each bar.
+// ---------------------------------------------------------------------------
+updateAnchoredLine(line ln, label lbl, bool show, float val, int originBar, bool recreate, color col, string tag) =>
+    var line  newLn  = na
+    var label newLbl = na
+    if show and not na(val) and not na(originBar)
+        if na(ln) or recreate
+            if not na(ln)
+                line.delete(ln)
+                label.delete(lbl)
+            newLn := line.new(originBar, val, bar_index, val, extend=extend.right, color=col, width=1)
+            newLbl := label.new(bar_index, val, text=str.tostring(val, format.mintick) + " " + tag, style=label.style_label_left, color=col, textcolor=color.white, size=size.small)
+        else
+            line.set_xy2(ln, bar_index, val)
+            label.set_xy(lbl, bar_index, val)
+            label.set_text(lbl, str.tostring(val, format.mintick) + " " + tag)
+            newLn := ln
+            newLbl := lbl
+    else
+        if not na(ln)
+            line.delete(ln)
+            label.delete(lbl)
+        newLn := na
+        newLbl := na
+    [newLn, newLbl]
+
+// ---------------------------------------------------------------------------
+// Overnight session high/low: tracked live (with the exact bar of each new
+// extreme) while inside the overnight session window, then frozen once the
+// session ends, until the next overnight session begins.
+// ---------------------------------------------------------------------------
+onSession   = time(timeframe.period, overnightSess, overnightTz)
+inOnSession = not na(onSession)
+onStart     = inOnSession and na(onSession[1])
+
+var float onHigh = na
+var float onLow  = na
+var line  lnONH  = na
+var line  lnONL  = na
+var label lblONH = na
+var label lblONL = na
+
+onHighUpdated = false
+onLowUpdated  = false
+
+if onStart
+    onHigh := high
+    onLow  := low
+    onHighUpdated := true
+    onLowUpdated  := true
+else if inOnSession
+    if high > onHigh
+        onHigh := high
+        onHighUpdated := true
+    if low < onLow
+        onLow := low
+        onLowUpdated := true
+
+[lnONH_, lblONH_] = updateAnchoredLine(lnONH, lblONH, showOvernight, onHigh, bar_index, onHighUpdated, colorONH, "ONH")
+lnONH := lnONH_
+lblONH := lblONH_
+[lnONL_, lblONL_] = updateAnchoredLine(lnONL, lblONL, showOvernight, onLow, bar_index, onLowUpdated, colorONL, "ONL")
+lnONL := lnONL_
+lblONL := lblONL_
+
+// ---------------------------------------------------------------------------
+// Previous day's high/low and today's opening price, tracked directly from
+// this chart's own bars (not request.security) so the anchor bar is known.
+// Finalized once per day at the day boundary, using the prior day's
+// running high/low/open.
+// ---------------------------------------------------------------------------
+isNewDay = ta.change(time("D")) != 0
+
+var float dayHigh    = na
+var float dayLow     = na
+var int   dayHighBar = na
+var int   dayLowBar  = na
+var float pdhVal     = na
+var float pdlVal     = na
+var int   pdhBar     = na
+var int   pdlBar     = na
+var float opVal      = na
+var int   opBar       = na
+
+newDayEvent = isNewDay or na(dayHigh)
+
+if newDayEvent
+    if not na(dayHigh)
+        pdhVal := dayHigh
+        pdlVal := dayLow
+        pdhBar := dayHighBar
+        pdlBar := dayLowBar
+    dayHigh    := high
+    dayLow     := low
+    dayHighBar := bar_index
+    dayLowBar  := bar_index
+    opVal      := open
+    opBar      := bar_index
+else
+    if high > dayHigh
+        dayHigh    := high
+        dayHighBar := bar_index
+    if low < dayLow
+        dayLow    := low
+        dayLowBar := bar_index
+
+var line  lnPDH  = na
+var line  lnPDL  = na
+var label lblPDH = na
+var label lblPDL = na
+var line  lnOP   = na
+var label lblOP  = na
+
+[lnPDH_, lblPDH_] = updateAnchoredLine(lnPDH, lblPDH, showPrevDay, pdhVal, pdhBar, newDayEvent, colorPDH, "PDH")
+lnPDH := lnPDH_
+lblPDH := lblPDH_
+[lnPDL_, lblPDL_] = updateAnchoredLine(lnPDL, lblPDL, showPrevDay, pdlVal, pdlBar, newDayEvent, colorPDL, "PDL")
+lnPDL := lnPDL_
+lblPDL := lblPDL_
+[lnOP_, lblOP_] = updateAnchoredLine(lnOP, lblOP, showOpen, opVal, opBar, newDayEvent, colorOP, "OP")
+lnOP := lnOP_
+lblOP := lblOP_

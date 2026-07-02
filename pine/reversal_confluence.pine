@@ -1,0 +1,109 @@
+//@version=6
+indicator("Reversal Confluence SMA Crossover", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+fastLen        = input.int(10, "Fast SMA Length", minval=1, group="Crossover")
+slowLen        = input.int(30, "Slow SMA Length", minval=1, group="Crossover")
+swingBars      = input.int(3, "Swing Lookback/Lookahead Bars", minval=1, group="Crossover")
+minConfluence  = input.int(1, "Minimum Confluence Score to Plot", minval=0, maxval=1, group="Crossover")
+
+showTPSL       = input.bool(true, "Show auto take-profit / stop-loss", group="Take Profit / Stop Loss")
+atrLen         = input.int(14, "ATR Length", minval=1, group="Take Profit / Stop Loss")
+slAtrMult      = input.float(1.5, "Stop Loss ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
+tpAtrMult      = input.float(3.0, "Take Profit ATR Multiple", minval=0.1, step=0.1, group="Take Profit / Stop Loss")
+
+// ---------------------------------------------------------------------------
+// Fast/slow SMA crossover
+// ---------------------------------------------------------------------------
+fastSMA = ta.sma(close, fastLen)
+slowSMA = ta.sma(close, slowLen)
+
+bullCross = ta.crossover(fastSMA, slowSMA)
+bearCross = ta.crossunder(fastSMA, slowSMA)
+
+// ---------------------------------------------------------------------------
+// Swing points and structure breaks
+// ---------------------------------------------------------------------------
+pivotHighVal = ta.pivothigh(high, swingBars, swingBars)
+pivotLowVal  = ta.pivotlow(low, swingBars, swingBars)
+
+var float breakLastHigh = na
+var float breakLastLow  = na
+var bool  hadBullishBreak = false
+var bool  hadBearishBreak = false
+
+if not na(pivotHighVal)
+    breakLastHigh := pivotHighVal
+
+if not na(pivotLowVal)
+    breakLastLow := pivotLowVal
+
+// Structure break: price closes beyond the most recent prior swing high/low.
+// Once a break of a given direction has occurred, that direction stays
+// "armed" for future confluence scoring (mirrors the original Python logic).
+bullishBreakNow = not na(breakLastHigh) and close > breakLastHigh
+bearishBreakNow = not na(breakLastLow) and close < breakLastLow
+
+if bullishBreakNow
+    breakLastHigh := close
+    hadBullishBreak := true
+
+if bearishBreakNow
+    breakLastLow := close
+    hadBearishBreak := true
+
+// ---------------------------------------------------------------------------
+// Confluence scoring
+// ---------------------------------------------------------------------------
+buyScore  = bullCross and hadBullishBreak ? 1 : 0
+sellScore = bearCross and hadBearishBreak ? 1 : 0
+
+plotBuy  = bullCross and buyScore >= minConfluence
+plotSell = bearCross and sellScore >= minConfluence
+
+plotshape(plotBuy, title="BUY", location=location.belowbar, style=shape.triangleup, color=color.new(color.green, 0), size=size.small)
+plotshape(plotSell, title="SELL", location=location.abovebar, style=shape.triangledown, color=color.new(color.red, 0), size=size.small)
+
+if plotBuy
+    label.new(bar_index, low, text="BUY  score " + str.tostring(buyScore), style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+
+if plotSell
+    label.new(bar_index, high, text="SELL  score " + str.tostring(sellScore), style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+// ---------------------------------------------------------------------------
+// Automatic take-profit / stop-loss levels for the most recent signal.
+// Replaces the previous signal's lines so only the active trade is shown.
+// ---------------------------------------------------------------------------
+atrVal = ta.atr(atrLen)
+
+var line  tpLine  = na
+var line  slLine  = na
+var label tpLabel = na
+var label slLabel = na
+
+// Pine doesn't allow user-defined functions to reassign global `var`
+// variables, so the TP/SL drawing logic is inlined at each call site
+// instead of factored into a shared function.
+if showTPSL and (plotBuy or plotSell)
+    if not na(tpLine)
+        line.delete(tpLine)
+        label.delete(tpLabel)
+    if not na(slLine)
+        line.delete(slLine)
+        label.delete(slLabel)
+
+    tp = plotBuy ? close + atrVal * tpAtrMult : close - atrVal * tpAtrMult
+    sl = plotBuy ? close - atrVal * slAtrMult : close + atrVal * slAtrMult
+
+    tpLine  := line.new(bar_index, tp, bar_index + 1, tp, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
+    slLine  := line.new(bar_index, sl, bar_index + 1, sl, extend=extend.right, color=color.red, width=1, style=line.style_dashed)
+    tpLabel := label.new(bar_index, tp, text="TP " + str.tostring(tp, format.mintick), style=label.style_label_left, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+    slLabel := label.new(bar_index, sl, text="SL " + str.tostring(sl, format.mintick), style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+plot(fastSMA, "Fast SMA", color=color.blue)
+plot(slowSMA, "Slow SMA", color=color.orange)
+
+alertcondition(plotBuy, title="High Confluence BUY", message="BUY signal with confluence score above the configured minimum")
+alertcondition(plotSell, title="High Confluence SELL", message="SELL signal with confluence score above the configured minimum")

@@ -1,0 +1,123 @@
+//@version=6
+indicator("Micro Fib Pullback Levels (ZigZag)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+atrLen        = input.int(20, "ATR length", minval=1, group="Swing Threshold")
+thresholdMult = input.float(4.0, "Minimum reversal to confirm a swing (x ATR)", minval=0.1, step=0.1, group="Swing Threshold")
+maxActiveLegs = input.int(2, "Max active legs shown (current trend + opposing)", minval=1, maxval=10, group="Display")
+showDebug     = input.bool(true, "Show debug markers at confirmed swing points", group="Debug")
+
+atrVal    = ta.atr(atrLen)
+threshold = atrVal * thresholdMult
+
+// ---------------------------------------------------------------------------
+// Standard ZigZag swing detector. A new pivot only confirms once price
+// reverses from the current candidate extreme by at least `threshold`.
+//
+// Only the most recent `maxActiveLegs` (default 2 — the current trend's
+// leg plus the immediately preceding opposing leg) are kept on the chart.
+// A leg is also dropped immediately, before that cap even matters, once
+// it's no longer "unvisited or respected" — i.e. once price closes
+// through its 61.8% level against it without holding.
+// ---------------------------------------------------------------------------
+var string dir          = "up" // "up" = searching for a new HIGH pivot, "down" = searching for a new LOW pivot
+var float  pivotVal      = na
+var int    pivotBar      = na
+var float  prevPivotVal  = na
+var int    prevPivotBar  = na
+var float  candidate     = na
+var int    candidateBar  = na
+
+type FibLeg
+    line  ln50
+    line  ln618
+    label lbl50
+    label lbl618
+    float lvl618
+    bool  isBullish
+
+var array<FibLeg> fibLegs = array.new<FibLeg>()
+
+justConfirmed = false
+
+if na(pivotVal)
+    pivotVal     := close
+    pivotBar     := bar_index
+    candidate    := close
+    candidateBar := bar_index
+else if dir == "up"
+    if na(candidate) or high > candidate
+        candidate    := high
+        candidateBar := bar_index
+    if candidate - low >= threshold
+        prevPivotVal := pivotVal
+        prevPivotBar := pivotBar
+        pivotVal     := candidate
+        pivotBar     := candidateBar
+        dir          := "down"
+        candidate    := low
+        candidateBar := bar_index
+        justConfirmed := true
+
+        if showDebug
+            label.new(pivotBar, pivotVal, text="PIVOT", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+else
+    if na(candidate) or low < candidate
+        candidate    := low
+        candidateBar := bar_index
+    if high - candidate >= threshold
+        prevPivotVal := pivotVal
+        prevPivotBar := pivotBar
+        pivotVal     := candidate
+        pivotBar     := candidateBar
+        dir          := "up"
+        candidate    := high
+        candidateBar := bar_index
+        justConfirmed := true
+
+        if showDebug
+            label.new(pivotBar, pivotVal, text="PIVOT", style=label.style_label_up, color=color.new(color.orange, 50), textcolor=color.white, size=size.tiny)
+
+// ---------------------------------------------------------------------------
+// On a new confirmed leg, add its fib, evicting the oldest if already at
+// the active-legs cap.
+// ---------------------------------------------------------------------------
+if not na(prevPivotVal) and justConfirmed
+    if array.size(fibLegs) >= maxActiveLegs
+        oldest = array.shift(fibLegs)
+        line.delete(oldest.ln50)
+        line.delete(oldest.ln618)
+        label.delete(oldest.lbl50)
+        label.delete(oldest.lbl618)
+
+    legColor = pivotVal > prevPivotVal ? color.green : color.red
+
+    move   = pivotVal - prevPivotVal
+    lvl50  = pivotVal - 0.5 * move
+    lvl618 = pivotVal - 0.618 * move
+
+    ln50   = line.new(bar_index, lvl50, bar_index + 1, lvl50, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+    ln618  = line.new(bar_index, lvl618, bar_index + 1, lvl618, extend=extend.right, color=legColor, width=1, style=line.style_dashed)
+    lbl50  = label.new(bar_index, lvl50, text="50.00% (" + str.tostring(lvl50, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+    lbl618 = label.new(bar_index, lvl618, text="61.80% (" + str.tostring(lvl618, format.mintick) + ")", style=label.style_label_left, color=color.new(legColor, 80), textcolor=legColor, size=size.small)
+
+    array.push(fibLegs, FibLeg.new(ln50=ln50, ln618=ln618, lbl50=lbl50, lbl618=lbl618, lvl618=lvl618, isBullish=legColor == color.green))
+
+// ---------------------------------------------------------------------------
+// Drop any leg whose 61.8% level has been disrespected — a bullish
+// (support) zone closing below its 61.8%, or a bearish (resistance) zone
+// closing above its 61.8% — so only unvisited or still-respected zones
+// remain visible.
+// ---------------------------------------------------------------------------
+if array.size(fibLegs) > 0
+    for i = array.size(fibLegs) - 1 to 0
+        leg = array.get(fibLegs, i)
+        disrespected = leg.isBullish ? close < leg.lvl618 : close > leg.lvl618
+        if disrespected
+            line.delete(leg.ln50)
+            line.delete(leg.ln618)
+            label.delete(leg.lbl50)
+            label.delete(leg.lbl618)
+            array.remove(fibLegs, i)
