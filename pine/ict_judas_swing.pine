@@ -39,7 +39,7 @@ biasTf      = input.timeframe("15", "Order Flow Timeframe", group="Step 1: Order
 biasPivLen  = input.int(3, "Bias Pivot Strength (bars each side)", minval=1, group="Step 1: Order Flow Bias")
 asiaSess    = input.session("2000-0000", "Asian Session (NY time)", group="Step 2: Liquidity Levels")
 londonSess  = input.session("0200-0500", "London Session (NY time)", group="Step 2: Liquidity Levels")
-tradeSess   = input.session("0830-1100", "Judas Window (NY time)", tooltip="Purge + entry window after the open. Video: 08:30 for forex; use 0930-1200 for indices like NAS100.", group="Step 3: Purge Window")
+tradeSess   = input.session("0930-1200", "Judas Window (NY time)", tooltip="Purge + entry window after the open. Video: indices like NAS100/MNQ use the 09:30 equities open (default here); forex uses 0830-1100. Session logic is computed in New York time internally regardless of the chart's display timezone.", group="Step 3: Purge Window")
 ltfPivLen   = input.int(3, "MSS Pivot Strength (bars each side)", minval=1, group="Step 4: MSS + FVG")
 fvgMaxBars  = input.int(20, "FVG Freshness (max bars old)", minval=1, group="Step 4: MSS + FVG")
 dispAtrMult = input.float(0.0, "Displacement Min Body (x ATR14, 0 = off)", minval=0.0, step=0.1, tooltip="Extra displacement filter on the FVG's middle candle. The FVG itself is already the video's displacement evidence, so this defaults off.", group="Step 4: MSS + FVG")
