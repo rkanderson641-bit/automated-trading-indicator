@@ -46,6 +46,7 @@ dispAtrMult = input.float(0.0, "Displacement Min Body (x ATR14, 0 = off)", minva
 slBufTicks  = input.int(4, "Stop Breathing Room (ticks)", minval=0, group="Step 5: Orders")
 rrMult      = input.float(2.0, "Reward : Risk", minval=0.1, step=0.1, group="Step 5: Orders")
 maxStopPts  = input.float(0.0, "Max Stop Distance (price units, 0 = off)", minval=0.0, tooltip="Video: skip the trade if the stop needs more than 15-20 pips (forex). Set in raw price units for the symbol you trade.", group="Step 5: Orders")
+maxRiskUsd  = input.float(400.0, "Max Risk Per Trade ($, 0 = off)", minval=0.0, step=25, tooltip="Skips setups whose 1R stop distance costs more than this in dollars at 1 contract. With fixed position size, uncapped stop width is what lets losers outweigh 2R winners.", group="Step 5: Orders")
 orderExpiry = input.int(45, "Unfilled Order Expiry (bars)", minval=1, group="Step 5: Orders")
 onePerDay   = input.bool(true, "One setup per day", group="Step 5: Orders")
 flattenEod  = input.bool(true, "Flatten at 16:00 NY", group="Step 5: Orders")
@@ -134,6 +135,25 @@ var int   placedBar   = na
 var float lastEntryPx = na
 var float lastStopPx  = na
 var float lastTpPx    = na
+var float lastRiskUsd = na
+
+// Diagnostics: day funnel, exit types, realized R. These exist to locate
+// WHERE the pipeline rejects days / loses money before any tuning is done.
+var int   daysTotal   = 0
+var int   daysBias    = 0
+var int   daysPurge   = 0
+var int   daysMss     = 0
+var int   daysPlaced  = 0
+var int   daysFilled  = 0
+var bool  dayFilled   = false
+var int   tpCount     = 0
+var int   slCount     = 0
+var int   eodCount    = 0
+var int   cancelCount = 0
+var float sumWinR     = 0.0
+var float sumLossR    = 0.0
+var int   winRn       = 0
+var int   lossRn      = 0
 
 if windowStart
     dayBias     := bias15
@@ -144,6 +164,20 @@ if windowStart
     mss         := false
     mssBar      := na
     placedToday := false
+    dayFilled   := false
+
+if windowEnd
+    daysTotal += 1
+    if dayBias != 0
+        daysBias += 1
+    if purged
+        daysPurge += 1
+    if mss
+        daysMss += 1
+    if placedToday
+        daysPlaced += 1
+    if dayFilled
+        daysFilled += 1
 
 longHunt  = dayBias == 1     // buy program: hunt session lows, trade long after the purge
 shortHunt = dayBias == -1    // sell program: hunt session highs, trade short
@@ -240,12 +274,14 @@ if canLong
     entryPx = bullFvgEntry
     stopPx  = judasLo - slBufTicks * syminfo.mintick
     risk    = entryPx - stopPx
-    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts)
+    riskUsd = risk * syminfo.pointvalue
+    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts) and (maxRiskUsd == 0 or riskUsd <= maxRiskUsd)
         strategy.entry("JudasL", strategy.long, limit=entryPx)
-        strategy.exit("JudasL X", from_entry="JudasL", stop=stopPx, limit=entryPx + rrMult * risk)
+        strategy.exit("JudasL X", from_entry="JudasL", stop=stopPx, limit=entryPx + rrMult * risk, comment_profit="TP", comment_loss="SL")
         placedToday := true
         pendingOrd  := true
         placedBar   := bar_index
+        lastRiskUsd := riskUsd
         lastEntryPx := entryPx
         lastStopPx  := stopPx
         lastTpPx    := entryPx + rrMult * risk
@@ -258,12 +294,14 @@ if canShort
     entryPx = bearFvgEntry
     stopPx  = judasHi + slBufTicks * syminfo.mintick
     risk    = stopPx - entryPx
-    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts)
+    riskUsd = risk * syminfo.pointvalue
+    if risk > 0 and (maxStopPts == 0 or risk <= maxStopPts) and (maxRiskUsd == 0 or riskUsd <= maxRiskUsd)
         strategy.entry("JudasS", strategy.short, limit=entryPx)
-        strategy.exit("JudasS X", from_entry="JudasS", stop=stopPx, limit=entryPx - rrMult * risk)
+        strategy.exit("JudasS X", from_entry="JudasS", stop=stopPx, limit=entryPx - rrMult * risk, comment_profit="TP", comment_loss="SL")
         placedToday := true
         pendingOrd  := true
         placedBar   := bar_index
+        lastRiskUsd := riskUsd
         lastEntryPx := entryPx
         lastStopPx  := stopPx
         lastTpPx    := entryPx - rrMult * risk
@@ -277,10 +315,34 @@ if canShort
 justFilled = strategy.position_size != 0 and strategy.position_size[1] == 0
 if justFilled
     pendingOrd := false
+    dayFilled  := true
 
 if pendingOrd and (bar_index - placedBar >= orderExpiry or windowEnd)
     strategy.cancel_all()
-    pendingOrd := false
+    pendingOrd  := false
+    cancelCount += 1
+
+// Tally each freshly closed trade: exit type (TP/SL/anything else = EOD
+// flat) and realized R relative to the risk stored at placement -- this is
+// what verifies the 1:2 target is actually being realized, not just set.
+if strategy.closedtrades > nz(strategy.closedtrades[1])
+    tradeIdx  = strategy.closedtrades - 1
+    exitCmt   = strategy.closedtrades.exit_comment(tradeIdx)
+    tradePnl  = strategy.closedtrades.profit(tradeIdx)
+    if exitCmt == "TP"
+        tpCount += 1
+    else if exitCmt == "SL"
+        slCount += 1
+    else
+        eodCount += 1
+    if not na(lastRiskUsd) and lastRiskUsd > 0
+        realizedR = tradePnl / lastRiskUsd
+        if realizedR >= 0
+            sumWinR += realizedR
+            winRn   += 1
+        else
+            sumLossR += realizedR
+            lossRn   += 1
 
 // Optional re-arm when multiple setups per day are allowed: a canceled
 // order or a closed trade frees the day again (a FRESH FVG is still
@@ -334,7 +396,7 @@ fmt(float v) =>
 fmtBar(int b) =>
     na(b) ? "-" : str.tostring(bar_index - b) + " bars ago"
 
-var table dbg = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 20), border_width=1)
+var table dbg = table.new(position.top_right, 2, 16, bgcolor=color.new(color.black, 20), border_width=1)
 if showDebug and barstate.islast
     tfWarn = timeframe.in_seconds() > 300 ? "chart TF > 5m: run on 1m/2m!" : timeframe.period + " ok"
     table.cell(dbg, 0, 0, "Chart TF", text_color=color.white, text_size=size.small)
@@ -361,3 +423,11 @@ if showDebug and barstate.islast
     table.cell(dbg, 1, 10, longHunt ? (na(bullFvgBar) ? "none" : "bull " + fmtBar(bullFvgBar) + " @ " + fmt(bullFvgEntry)) : shortHunt ? (na(bearFvgBar) ? "none" : "bear " + fmtBar(bearFvgBar) + " @ " + fmt(bearFvgEntry)) : "-", text_color=color.white, text_size=size.small)
     table.cell(dbg, 0, 11, "Order", text_color=color.white, text_size=size.small)
     table.cell(dbg, 1, 11, pendingOrd ? "pending @ " + fmt(lastEntryPx) : strategy.position_size != 0 ? "in trade" : placedToday ? "done for today" : "none", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 0, 12, "Funnel days>bias>purge>MSS>order>fill", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 12, str.tostring(daysTotal) + " > " + str.tostring(daysBias) + " > " + str.tostring(daysPurge) + " > " + str.tostring(daysMss) + " > " + str.tostring(daysPlaced) + " > " + str.tostring(daysFilled), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 13, "Exits TP / SL / EOD", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 13, str.tostring(tpCount) + " / " + str.tostring(slCount) + " / " + str.tostring(eodCount), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 14, "Expired unfilled", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 14, str.tostring(cancelCount), text_color=color.yellow, text_size=size.small)
+    table.cell(dbg, 0, 15, "Avg realized R win / loss", text_color=color.white, text_size=size.small)
+    table.cell(dbg, 1, 15, (winRn > 0 ? str.tostring(sumWinR / winRn, "#.##") : "-") + " / " + (lossRn > 0 ? str.tostring(sumLossR / lossRn, "#.##") : "-"), text_color=color.yellow, text_size=size.small)
